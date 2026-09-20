@@ -1055,24 +1055,33 @@
           (a.DisplayName && a.DisplayName.UserLocalizedLabel && a.DisplayName.UserLocalizedLabel.Label) || "";
         var type = a.AttributeType || "";
         var raw = rec[ln];
-        var formatted = rec[ln + "@OData.Community.Display.V1.FormattedValue"];
+        var isLookup = type === "Lookup" || type === "Owner" || type === "Customer";
+        // Formatted-value annotations live on the lookup property `_<name>_value`
+        // for lookups, and on `<name>` for simple/option-set attributes.
         var value = "";
-        var valueName = formatted == null ? "" : String(formatted);
-        if (type === "Lookup" || type === "Owner" || type === "Customer") {
+        var valueName = "";
+        if (isLookup) {
           value = rec["_" + ln + "_value"] || "";
-        } else if (raw == null) {
-          value = "";
-        } else if (typeof raw === "object") {
-          value = JSON.stringify(raw);
+          valueName =
+            rec["_" + ln + "_value@OData.Community.Display.V1.FormattedValue"] ||
+            rec[ln + "@OData.Community.Display.V1.FormattedValue"] ||
+            "";
         } else {
-          value = String(raw);
+          valueName = rec[ln + "@OData.Community.Display.V1.FormattedValue"] || "";
+          if (raw == null) {
+            value = "";
+          } else if (typeof raw === "object") {
+            value = JSON.stringify(raw);
+          } else {
+            value = String(raw);
+          }
         }
         rows.push({
           display: display,
           logical: ln,
           type: type,
           value: value,
-          name: valueName
+          name: valueName == null ? "" : String(valueName)
         });
       });
       rows.sort(function (a, b) {
@@ -1100,12 +1109,17 @@
       var X = requireForm();
       var entityName = X.Page.data.entity.getEntityName();
       var rows = [];
+      var seen = {}; // "logical|value" -> true, avoids duplicates
       function push(group, logical, optSet) {
         var opts = (optSet && optSet.Options) || [];
         opts.forEach(function (o) {
+          var value = String(o.Value);
+          var key = logical + "|" + value;
+          if (seen[key]) return;
+          seen[key] = true;
           var label =
             (o.Label && o.Label.UserLocalizedLabel && o.Label.UserLocalizedLabel.Label) || "";
-          rows.push({ group: group, attribute: logical, label: label, value: String(o.Value) });
+          rows.push({ group: group, attribute: logical, label: label, value: value });
         });
       }
       var casts = [
@@ -1127,8 +1141,14 @@
             var display =
               (a.DisplayName && a.DisplayName.UserLocalizedLabel && a.DisplayName.UserLocalizedLabel.Label) || "";
             var group = display ? display + " (" + a.LogicalName + ")" : a.LogicalName;
-            push(group, a.LogicalName, a.OptionSet);
-            if (a.GlobalOptionSet) push(group, a.LogicalName, a.GlobalOptionSet);
+            // A global option set exposes its options through GlobalOptionSet;
+            // use the first non-empty source so values are not listed twice.
+            var source =
+              (a.GlobalOptionSet && a.GlobalOptionSet.Options && a.GlobalOptionSet.Options.length
+                ? a.GlobalOptionSet
+                : null) ||
+              (a.OptionSet && a.OptionSet.Options && a.OptionSet.Options.length ? a.OptionSet : null);
+            push(group, a.LogicalName, source);
           });
         } catch (e) {}
       }

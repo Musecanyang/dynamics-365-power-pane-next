@@ -1,6 +1,6 @@
 # Dynamics 365 Power Pane Next
 
-[![Version](https://img.shields.io/badge/version-1.0.1-blue.svg)](https://github.com/Musecanyang/dynamics-365-power-pane-next/releases)
+[![Version](https://img.shields.io/badge/version-1.0.2-blue.svg)](https://github.com/Musecanyang/dynamics-365-power-pane-next/releases)
 [![Manifest V3](https://img.shields.io/badge/manifest-v3-brightgreen.svg)](https://developer.chrome.com/docs/extensions/develop/migrate/what-is-mv3)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![CI](https://github.com/Musecanyang/dynamics-365-power-pane-next/actions/workflows/ci.yml/badge.svg)](https://github.com/Musecanyang/dynamics-365-power-pane-next/actions/workflows/ci.yml)

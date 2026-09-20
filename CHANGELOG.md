@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.2] - 2026-09-20
+
+### Fixed
+- `All Fields (Web API)`: the formatted name for **Lookup / Owner / Customer**
+  fields is now read from `_<field>_value@OData...FormattedValue` (was empty).
+- `OptionSet Values`: option values are no longer listed twice when an attribute
+  exposes both `OptionSet` and `GlobalOptionSet`.
+
 ## [1.0.1] - 2026-09-20
 
 ### Added
@@ -42,6 +50,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Initial public version: in-page Shadow-DOM pane with General, Record, Form,
   Navigation, Debug and Admin actions, plus real user impersonation.
 
-[Unreleased]: https://github.com/Musecanyang/dynamics-365-power-pane-next/compare/v1.0.1...HEAD
+[Unreleased]: https://github.com/Musecanyang/dynamics-365-power-pane-next/compare/v1.0.2...HEAD
+[1.0.2]: https://github.com/Musecanyang/dynamics-365-power-pane-next/releases/tag/v1.0.2
 [1.0.1]: https://github.com/Musecanyang/dynamics-365-power-pane-next/releases/tag/v1.0.1
 [1.0.0]: https://github.com/Musecanyang/dynamics-365-power-pane-next/releases/tag/v1.0.0
