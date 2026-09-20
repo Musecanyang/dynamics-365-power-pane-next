@@ -1,0 +1,47 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Validate manifest.json
+        run: node -e "JSON.parse(require('fs').readFileSync('manifest.json','utf8')); console.log('manifest.json OK')"
+
+      - name: Syntax-check JavaScript
+        run: |
+          set -e
+          for f in background.js \
+                   content/content.js \
+                   content/main-world.js \
+                   src/actions.js \
+                   src/constants.js \
+                   options/options.js; do
+            node --check "$f"
+            echo "OK  $f"
+          done
+
+      - name: Ensure action ids are unique
+        run: |
+          node -e "
+            const fs = require('fs');
+            const src = fs.readFileSync('src/actions.js', 'utf8');
+            const ids = [...src.matchAll(/id:\s*\"([^\"]+)\"/g)].map(m => m[1]);
+            const seen = new Set();
+            const dupes = ids.filter(id => (seen.has(id) ? true : (seen.add(id), false)));
+            if (dupes.length) { console.error('Duplicate action ids:', dupes); process.exit(1); }
+            console.log(ids.length + ' action ids, all unique');
+          "

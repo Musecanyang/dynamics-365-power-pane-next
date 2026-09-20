@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Documentation
+    url: https://github.com/Musecanyang/dynamics-365-power-pane-next#readme
+    about: Read the README (features, usage, impersonation, Microsoft references).
+  - name: Questions & ideas
+    url: https://github.com/Musecanyang/dynamics-365-power-pane-next/discussions
+    about: Ask questions or share ideas (if Discussions is enabled).

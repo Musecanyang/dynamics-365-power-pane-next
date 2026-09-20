@@ -1,0 +1,65 @@
+name: Bug report
+description: Report a problem with the extension
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting a bug. Please do not include secrets, tokens or personal data.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: A clear description of the bug and what you expected instead.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Open a model-driven app at ...
+        2. Open the pane and click ...
+        3. See error ...
+    validations:
+      required: true
+  - type: input
+    id: action
+    attributes:
+      label: Action / feature
+      description: Which action (for example "Record Url" or "Impersonate User") is affected?
+  - type: input
+    id: version
+    attributes:
+      label: Extension version
+      description: Shown on the extension card in chrome://extensions, or in `manifest.json`.
+    validations:
+      required: true
+  - type: input
+    id: browser
+    attributes:
+      label: Browser
+      placeholder: "Chrome 128 / Edge 128"
+    validations:
+      required: true
+  - type: input
+    id: app
+    attributes:
+      label: App type
+      placeholder: "Sales Hub / Customer Service / custom model-driven app"
+  - type: textarea
+    id: logs
+    attributes:
+      label: Console / errors
+      description: Paste any errors from the browser console or the extension's Errors page.
+      render: shell
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checklist
+      options:
+        - label: I have reloaded the extension and refreshed the page before reproducing.
+          required: true
+        - label: I searched existing issues for a duplicate.
+          required: true
