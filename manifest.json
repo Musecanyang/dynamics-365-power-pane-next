@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Dynamics 365 Power Pane Next",
   "short_name": "Power Pane Next",
-  "version": "1.0.2",
+  "version": "1.1.0",
   "description": "In-page action pane, diagnostics and real user impersonation for Microsoft Dynamics 365 / Dataverse.",
   "minimum_chrome_version": "111",
   "permissions": [

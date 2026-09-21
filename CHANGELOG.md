@@ -5,14 +5,21 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.1.0] - 2026-09-21
+
+### Added
+- `All Fields`: an **Entity** column resolving what each lookup points at.
+- `All Fields`: a **Copy JSON** button for the raw Web API record payload.
 
 ### Changed
-- `All Fields`: the **Entity** column now sits directly after **Type**, and the
-  Logical Name / Value columns are width-capped so a long value no longer
-  stretches the dialog.
+- `All Fields`: the **Entity** column sits directly after **Type**, and the
+  Logical Name / Value / Entity columns are width-capped so a long value no
+  longer stretches the dialog (hovering a truncated cell shows the full text).
 - `All Fields`: the attributes, record and lookup-target requests are issued in
-  parallel instead of one after the other.
+  parallel instead of one after the other; the table action bar sits above the
+  table.
+- `All Fields`: dropped the "(Web API)" suffix; platform companion columns
+  (`*name` / `*yominame`) are hidden.
 - The pane and every dialog now use a slim, theme-aware scrollbar instead of the
   browser's default one (thin thumb, transparent track, darkens on hover).
 
@@ -20,6 +27,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `All Fields`: empty lookups now always show their target entity (the
   `lookuplogicalname` annotation is only returned for lookups that point at a
   record, so the metadata query is still needed as a source).
+
+### Internal
+- `src/constants.js` is the single source of truth for every cross-file literal;
+  duplicated fallbacks removed and the MAIN-world bridge validates its markers
+  and sender. CI checks that the bridge markers stay in sync.
 
 ## [1.0.2] - 2026-09-20
 
@@ -64,7 +76,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Initial public version: in-page Shadow-DOM pane with General, Record, Form,
   Navigation, Debug and Admin actions, plus real user impersonation.
 
-[Unreleased]: https://github.com/Musecanyang/dynamics-365-power-pane-next/compare/v1.0.2...HEAD
+[Unreleased]: https://github.com/Musecanyang/dynamics-365-power-pane-next/compare/v1.1.0...HEAD
+[1.1.0]: https://github.com/Musecanyang/dynamics-365-power-pane-next/releases/tag/v1.1.0
 [1.0.2]: https://github.com/Musecanyang/dynamics-365-power-pane-next/releases/tag/v1.0.2
 [1.0.1]: https://github.com/Musecanyang/dynamics-365-power-pane-next/releases/tag/v1.0.1
 [1.0.0]: https://github.com/Musecanyang/dynamics-365-power-pane-next/releases/tag/v1.0.0
