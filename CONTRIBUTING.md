@@ -41,14 +41,15 @@ Validate the manifest and message shapes by loading the extension and using
 ## Project layout
 
 ```
-manifest.json              MV3 manifest
-background.js              service worker: toolbar toggle + impersonation
-src/constants.js           shared constants (name, storage keys, message types)
-src/actions.js             action registry (single source of truth)
-content/content.js         isolated-world UI (Shadow DOM pane, modals, prefs)
-content/main-world.js      MAIN-world bridge (Xrm + Web API handlers)
-options/                   options page (visibility, order, shortcuts, theme)
-icons/                     toolbar icons
+manifest.json                  MV3 manifest
+background.js                  service worker: toolbar toggle + impersonation
+src/constants.js               shared constants (name, storage keys, message types)
+src/actions.js                 action registry (single source of truth)
+content/content.js             isolated-world UI (pane, modals, prefs, impersonation,
+                               user-access + snippets editors)
+content/main-world.js          MAIN-world bridge (Xrm + Web API command handlers)
+options/                       options page (visibility, order, shortcuts, theme)
+icons/                         toolbar icons
 ```
 
 ## Adding an action
@@ -66,22 +67,23 @@ icons/                     toolbar icons
 
 2. **Register the action** in `src/actions.js` with a **stable `id`**, a `group`,
    a `label` and the `command` name. Add `local: true` for actions handled
-   entirely in `content/content.js`. Use the `inputs` array for form fields
-   (`entity: true` for the entity picker, `defaultCurrent: true` to pre-fill the
-   current entity).
+   entirely in `content/content.js` (register the command via `registerLocal`).
+   Use the `inputs` array for form fields (`entity: true` for the entity picker,
+   `defaultCurrent: true` to pre-fill the current entity).
 
 > **Keep action `id`s stable.** They are the keys used for saved visibility,
 > ordering and shortcuts. Renaming an id resets those for existing users.
 
 ## Code style
 
-- Plain, unbundled JavaScript. UI code in `content/content.js` and
-  `options/options.js` stays ES5-style (`var`, `function`); `async`/`await` is
-  fine in `content/main-world.js`.
+- Plain, unbundled JavaScript. `async`/`await` is used throughout for any
+  asynchronous flow (the minimum Chrome version is 111, so there is no need to
+  stick to ES5 promises).
 - File header + JSDoc on exported/non-trivial functions.
 - Prefer early returns and small, single-purpose functions.
 - No external dependencies and no build tooling.
-- Keep `src/constants.js` the only place for storage keys and message types.
+- Keep `src/constants.js` the only place for storage keys, message types and
+  bridge markers; never re-declare them elsewhere.
 - Two-space indentation; double quotes.
 
 ## Commit messages

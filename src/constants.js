@@ -1,11 +1,25 @@
 /**
  * Dynamics 365 Power Pane Next - shared constants.
  *
- * Loaded in every extension context (service worker, options page, isolated
- * content scripts and the MAIN-world bridge). Keep this file dependency-free
+ * This is the SINGLE SOURCE OF TRUTH for every cross-file string literal:
+ * the product name, storage keys, message types and the page<->content-script
+ * bridge markers. Change a value here and it changes everywhere.
+ *
+ * It is loaded in the service worker (importScripts), the options page (script
+ * tag) and the ISOLATED-world content script. Keep this file dependency-free
  * and side-effect free: it only attaches the frozen `PP` namespace to the
- * current global. All cross-file string literals (storage keys, message
- * types, bridge markers) live here so they can be changed in one place.
+ * current global.
+ *
+ * IMPORTANT: do not re-declare these values in any other file. Consumers
+ * always read `window.PP` / `self.PP` directly. A duplicated fallback is a
+ * silent divergence hazard.
+ *
+ * IMPORTANT: do NOT list this file in the MAIN-world content_scripts entry.
+ * Chrome does not reliably share a content-script file that appears in both a
+ * MAIN-world and an ISOLATED-world entry (crbug.com/324096753): the shared
+ * globals go missing in one of the worlds. The MAIN-world bridge therefore
+ * keeps its own copy of the three bridge markers (content/main-world.js), and
+ * the CI workflow asserts they stay in sync with PP.BRIDGE here.
  */
 (function (global) {
   "use strict";
@@ -14,6 +28,12 @@
     /** Product identity. */
     NAME: "Dynamics 365 Power Pane Next",
     SHORT_NAME: "Power Pane Next",
+
+    /** UI theme values persisted under {@link PP.SYNC.THEME}. */
+    THEME: {
+      DARK: "dark",
+      LIGHT: "light"
+    },
 
     /** chrome.storage.sync keys (user preferences, synced across devices). */
     SYNC: {
@@ -49,8 +69,14 @@
       PANE_TOGGLE: "pp-toggle"
     },
 
-    /** window.postMessage bridge markers (page <-> isolated content script). */
+    /**
+     * window.postMessage bridge between the isolated-world UI and the
+     * MAIN-world bridge. KEY is the marker property on every bridge message;
+     * REQUEST/RESPONSE are its values. Using the frozen constants here (rather
+     * than inline literals) keeps both sides of the bridge in lock-step.
+     */
     BRIDGE: {
+      KEY: "__ppNext",
       REQUEST: "req",
       RESPONSE: "res"
     }
@@ -59,7 +85,7 @@
   try {
     Object.freeze(PP);
   } catch (e) {
-    /* older engines: freezing is best-effort */
+    /* Older engines: freezing is best-effort only. */
   }
 
   global.PP = PP;

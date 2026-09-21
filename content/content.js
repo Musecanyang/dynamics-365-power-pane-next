@@ -5,8 +5,10 @@
  *   - Render the action pane (Shadow DOM so host page styles never leak in).
  *   - Persist/apply user preferences (visibility, order, theme, shortcuts).
  *   - Forward action commands to the MAIN-world bridge and render results.
- *   - Drive the impersonation UX (search/select, status, cache handling).
- *   - Host the in-app "User Permissions" editor.
+ *   - Own the bridge plumbing (request/response with a nonce id) and the shared
+ *     UI primitives (modals, toasts, output/table renderers, storage wrappers).
+ *   - Host the self-contained feature editors: impersonation, user permissions
+ *     and FetchXML snippets.
  *
  * Dependencies: src/constants.js (PP), src/actions.js (POWER_PANE_ACTIONS).
  * The MAIN-world bridge is content/main-world.js.
@@ -16,36 +18,29 @@
   if (window.__ppNextUiLoaded) return;
   window.__ppNextUiLoaded = true;
 
-  var PP =
-    window.PP ||
-    {
-      NAME: "Dynamics 365 Power Pane Next",
-      SHORT_NAME: "Power Pane Next",
-      SYNC: {
-        SETTINGS: "ppSettings",
-        THEME: "ppTheme",
-        SHORTCUTS: "ppShortcuts",
-        SNIPPETS: "ppSnippets",
-        ORDER: "ppOrder"
-      },
-      LOCAL: {
-        RECENT_USERS: "ppRecentUsers",
-        PINNED_USERS: "ppPinnedUsers",
-        LAYOUT: "ppLayout3",
-        AUTO_OPEN_USERS: "ppAutoUsers"
-      },
-      MSG: {
-        IMP_START: "pp:imp-start",
-        IMP_STOP: "pp:imp-stop",
-        IMP_STATUS: "pp:imp-status",
-        IMP_RULES: "pp:imp-rules",
-        RELOAD_TAB: "pp:reload",
-        OPEN_OPTIONS: "pp-open-options",
-        PANE_TOGGLE: "pp-toggle"
-      },
-      BRIDGE: { REQUEST: "req", RESPONSE: "res" }
-    };
+  var PP = window.PP;
   var ACTIONS = window.POWER_PANE_ACTIONS || [];
+
+  /* --- Tunables (named to avoid magic numbers) -------------------------- */
+  var BRIDGE_TIMEOUT_MS = 30000;
+  var TOAST_DURATION_MS = 5000;
+  var ENTITY_SEARCH_DEBOUNCE_MS = 250;
+  var LONG_VALUE_THRESHOLD = 400;
+  var ORDER_UNSET_INDEX = 9999;
+  /** Minimum characters before a user search fires. */
+  var MIN_USER_SEARCH_LENGTH = 2;
+  /** Debounce for the user search inputs. */
+  var USER_SEARCH_DEBOUNCE_MS = 350;
+  /** Number of recent users retained. */
+  var RECENT_USERS_LIMIT = 3;
+  /** Delay before reloading after applying/clearing the impersonated identity. */
+  var RELOAD_DELAY_MS = 300;
+  /** Cap on user search results shown in the permissions editor. */
+  var USER_SEARCH_RESULT_LIMIT = 15;
+  /** Cap on teams listed in the "add team" picker. */
+  var TEAM_LIST_LIMIT = 200;
+
+  /** Group header colour by group name; unknown groups fall back to accent. */
   var GROUP_COLORS = {
     General: "#3a63ff",
     Impersonation: "#f59e0b",
@@ -55,15 +50,15 @@
     Debug: "#ef4444",
     Admin: "#64748b"
   };
+
   function groupColor(name) {
     return GROUP_COLORS[name] || "#3a63ff";
   }
-  var pending = new Map();
-  var seq = 0;
 
+  /** Shared mutable UI state (read/written by the feature sections below). */
   var state = {
     settings: {},
-    theme: "dark",
+    theme: PP.THEME.DARK,
     layout: null,
     shortcuts: {},
     snippets: [],
@@ -73,32 +68,98 @@
     order: []
   };
 
-  // ---- bridge ----------------------------------------------------------
-  window.addEventListener("message", function (ev) {
-    if (ev.source !== window) return;
-    var msg = ev.data;
-    if (!msg || msg.__pp !== "res") return;
-    var entry = pending.get(msg.id);
+  /* ------------------------------------------------------------------ *
+   * Bridge (isolated world <-> MAIN world)
+   * ------------------------------------------------------------------ */
+
+  var pending = new Map();
+
+  /**
+   * Generate an unpredictable message id. Used as the bridge correlation id so
+   * that a response can only resolve the request that carries the same id.
+   * @returns {string}
+   */
+  function newMessageId() {
+    if (window.crypto && typeof window.crypto.randomUUID === "function") {
+      return window.crypto.randomUUID();
+    }
+    if (window.crypto && window.crypto.getRandomValues) {
+      var bytes = new Uint8Array(16);
+      window.crypto.getRandomValues(bytes);
+      return Array.prototype.map.call(bytes, function (b) {
+        return ("0" + b.toString(16)).slice(-2);
+      }).join("");
+    }
+    return "pp-" + Date.now() + "-" + Math.random().toString(16).slice(2);
+  }
+
+  window.addEventListener("message", function (event) {
+    // Accept only responses from this same window (and same origin) that carry
+    // our bridge marker and a pending id. Never trust the page's data.
+    if (event.source !== window) return;
+    if (event.origin && event.origin !== location.origin) return;
+    var message = event.data;
+    if (!message || message[PP.BRIDGE.KEY] !== PP.BRIDGE.RESPONSE) return;
+    if (typeof message.id !== "string") return;
+
+    var entry = pending.get(message.id);
     if (!entry) return;
-    pending.delete(msg.id);
+    pending.delete(message.id);
     clearTimeout(entry.timer);
-    if (msg.ok) entry.resolve(msg.result);
-    else entry.reject(new Error(msg.error || "Action failed"));
+    if (message.ok) entry.resolve(message.result);
+    else entry.reject(new Error(message.error || "Action failed"));
   });
 
+  /**
+   * Send a command to the MAIN-world bridge and resolve/reject with its result.
+   * @param {string} command
+   * @param {Object} [args]
+   * @returns {Promise<Object>}
+   */
   function send(command, args) {
     return new Promise(function (resolve, reject) {
-      var id = "pp-" + ++seq;
+      var id = newMessageId();
       var timer = setTimeout(function () {
         pending.delete(id);
         reject(new Error("Timed out waiting for the page."));
-      }, 30000);
+      }, BRIDGE_TIMEOUT_MS);
       pending.set(id, { resolve: resolve, reject: reject, timer: timer });
-      window.postMessage({ __pp: "req", id: id, command: command, args: args || {} }, "*");
+      window.postMessage(
+        { [PP.BRIDGE.KEY]: PP.BRIDGE.REQUEST, id: id, command: command, args: args || {} },
+        "*"
+      );
     });
   }
 
-  // ---- storage ---------------------------------------------------------
+  /**
+   * Send a message to the service worker and resolve with its (ok:true) reply.
+   * @param {Object} message
+   * @returns {Promise<Object>}
+   */
+  function bgSend(message) {
+    return new Promise(function (resolve, reject) {
+      try {
+        chrome.runtime.sendMessage(message, function (response) {
+          if (chrome.runtime.lastError) {
+            reject(new Error(chrome.runtime.lastError.message));
+            return;
+          }
+          if (!response || !response.ok) {
+            reject(new Error((response && response.error) || "Background request failed."));
+            return;
+          }
+          resolve(response);
+        });
+      } catch (error) {
+        reject(error);
+      }
+    });
+  }
+
+  /* ------------------------------------------------------------------ *
+   * Storage wrappers (Promise-based, never throw)
+   * ------------------------------------------------------------------ */
+
   function syncGet(defaults) {
     return new Promise(function (resolve) {
       try {
@@ -120,8 +181,8 @@
   function localGet(key, fallback) {
     return new Promise(function (resolve) {
       try {
-        chrome.storage.local.get({ [key]: fallback }, function (d) {
-          resolve(d[key]);
+        chrome.storage.local.get({ [key]: fallback }, function (data) {
+          resolve(data[key]);
         });
       } catch (e) {
         resolve(fallback);
@@ -138,6 +199,10 @@
     });
   }
 
+  /* ------------------------------------------------------------------ *
+   * Clipboard
+   * ------------------------------------------------------------------ */
+
   function copyText(text) {
     if (navigator.clipboard && navigator.clipboard.writeText) {
       return navigator.clipboard.writeText(text).catch(function () {
@@ -146,24 +211,40 @@
     }
     return Promise.resolve(legacyCopy(text));
   }
+
   function legacyCopy(text) {
-    var ta = document.createElement("textarea");
-    ta.value = text;
-    ta.style.cssText = "position:fixed;top:-9999px;left:-9999px";
-    document.body.appendChild(ta);
-    ta.select();
+    var textarea = document.createElement("textarea");
+    textarea.value = text;
+    textarea.style.cssText = "position:fixed;top:-9999px;left:-9999px";
+    document.body.appendChild(textarea);
+    textarea.select();
     try {
       document.execCommand("copy");
-    } catch (e) {}
-    ta.remove();
+    } catch (e) {
+      /* copy failed; ignore */
+    }
+    textarea.remove();
   }
 
-  // ---- styles ----------------------------------------------------------
+  /* ------------------------------------------------------------------ *
+   * Styles + DOM scaffold (Shadow DOM)
+   * ------------------------------------------------------------------ */
+
   var CSS = [
     ":host{all:initial}",
-    ".pp{--bg:#171a21;--fg:#e6e8ee;--sub:#8b93a7;--bd:#2c313c;--hover:#232836;--field:#0f1218;--accent:#3a63ff}",
-    ".pp.light{--bg:#ffffff;--fg:#1c1f26;--sub:#6b7280;--bd:#e5e7eb;--hover:#f3f4f6;--field:#ffffff;--accent:#3a63ff}",
+    ".pp{--bg:#171a21;--fg:#e6e8ee;--sub:#8b93a7;--bd:#2c313c;--hover:#232836;--field:#0f1218;--accent:#3a63ff;--scroll:rgba(139,147,167,.34);--scroll-hover:rgba(139,147,167,.58)}",
+    ".pp.light{--bg:#ffffff;--fg:#1c1f26;--sub:#6b7280;--bd:#e5e7eb;--hover:#f3f4f6;--field:#ffffff;--accent:#3a63ff;--scroll:rgba(107,114,128,.38);--scroll-hover:rgba(107,114,128,.62)}",
     ".pp *{box-sizing:border-box;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif}",
+    // Scrollbars: the pane lives in a shadow root and the native Windows
+    // scrollbar (bright track + grey thumb) clashes with the dark chrome. Both
+    // syntaxes below are needed - Chrome 121+ uses the standard properties,
+    // older engines fall back to the plain ::-webkit-scrollbar pseudo-elements.
+    ".pp *{scrollbar-width:thin;scrollbar-color:var(--scroll) transparent}",
+    ".pp ::-webkit-scrollbar{width:10px;height:10px}",
+    ".pp ::-webkit-scrollbar-track{background:transparent}",
+    ".pp ::-webkit-scrollbar-thumb{background:var(--scroll);border-radius:6px}",
+    ".pp ::-webkit-scrollbar-thumb:hover{background:var(--scroll-hover)}",
+    ".pp ::-webkit-scrollbar-corner{background:transparent}",
     ".pp .btn{position:fixed;top:50px;left:10px;z-index:2147483646;width:34px;height:34px;border-radius:8px;border:none;cursor:pointer;background:transparent;color:var(--accent);box-shadow:none;display:flex;align-items:center;justify-content:center;opacity:.95}",
     ".pp .btn:hover{background:rgba(127,127,127,.15);opacity:1}",
     ".pp .btn:focus{outline:none}",
@@ -194,7 +275,7 @@
     ".pp .toast.warning{border-left-color:#f59e0b}",
     ".pp .modal{position:fixed;inset:0;z-index:2147483647;background:rgba(0,0,0,.5);display:flex;align-items:center;justify-content:center}",
     ".pp .modal .box{width:430px;max-width:92vw;max-height:84vh;overflow:auto;background:var(--bg);color:var(--fg);border:1px solid var(--bd);border-radius:12px;box-shadow:0 16px 48px rgba(0,0,0,.5);padding:14px}",
-    ".pp .modal .box.wide{width:620px}",
+    ".pp .modal .box.wide{width:auto;min-width:min(680px,94vw);max-width:min(1080px,94vw)}",
     ".pp .modal .box{position:relative}",
     ".pp .modalctl{position:absolute;top:5px;right:7px;display:flex;gap:4px;z-index:6;cursor:move}",
     ".pp .modalctl button{border:1px solid var(--bd);background:var(--hover);color:var(--fg);border-radius:6px;font-size:10.5px;padding:2px 7px;cursor:pointer}",
@@ -213,6 +294,12 @@
     ".pp td.grouphead{background:var(--hover);font-weight:700;color:var(--fg);padding:6px 8px;border-bottom:1px solid var(--bd)}",
     ".pp th{position:sticky;top:0;background:var(--bg);text-align:left;color:var(--sub);font-weight:600;padding:6px 8px;border-bottom:1px solid var(--bd);white-space:nowrap}",
     ".pp td{padding:5px 8px;border-bottom:1px solid var(--bd);vertical-align:top;word-break:break-word}",
+    ".pp td.col-logical,.pp td.col-type,.pp td.col-entity{white-space:nowrap}",
+    // Table cells wrap their text in a `.cell` span (see `showTable`) so a
+    // column can cap its own width - `max-width` on the `td` itself is ignored
+    // by `table-layout:auto` tables.
+    ".pp td .cell{display:inline-block;vertical-align:top}",
+    ".pp td .cell.truncate{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}",
     ".pp tr:hover td{background:var(--hover)}",
     ".pp td.copy{cursor:pointer}",
     ".pp td.copy:hover{color:var(--accent)}",
@@ -225,8 +312,10 @@
     ".pp .chip{display:inline-block;background:var(--hover);border:1px solid var(--bd);border-radius:999px;padding:2px 8px;margin:2px 4px 2px 0;font-size:11.5px}",
     ".pp .foot{display:flex;gap:8px;justify-content:flex-end;margin-top:12px}",
     ".pp .foot.split{justify-content:space-between}",
-    ".pp .foot button,.pp .mini{border:1px solid var(--bd);background:var(--hover);color:var(--fg);border-radius:8px;padding:6px 12px;font-size:12px;cursor:pointer}",
-    ".pp .foot button.primary{background:var(--accent);border-color:var(--accent);color:#fff}",
+    ".pp .foot button,.pp .actions button,.pp .mini{border:1px solid var(--bd);background:var(--hover);color:var(--fg);border-radius:8px;padding:6px 12px;font-size:12px;cursor:pointer}",
+    ".pp .foot button.primary,.pp .actions button.primary{background:var(--accent);border-color:var(--accent);color:#fff}",
+    ".pp .actions{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;margin:2px 0 10px}",
+    ".pp .actions-buttons{display:flex;align-items:center;gap:10px;flex-wrap:wrap}",
     ".pp .mini{padding:2px 8px;font-size:11px;border-radius:6px}",
     ".pp .srow{display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid var(--bd)}",
     ".pp .srow .nm{flex:1;font-size:12.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}",
@@ -294,80 +383,108 @@
 
   var listEl = panel.querySelector(".list");
   var searchEl = panel.querySelector(".search input");
+  var pill = panel.querySelector(".imp-pill");
   var itemButtons = [];
   var activeIndex = -1;
+  var pageBtn = null;
 
+  /* ------------------------------------------------------------------ *
+   * Action list rendering
+   * ------------------------------------------------------------------ */
+
+  /** Actions that pass the visibility + search filter, in declaration order. */
   function visibleActions() {
-    var q = (searchEl.value || "").toLowerCase();
-    return ACTIONS.filter(function (a) {
-      if (state.settings[a.id] === false) return false;
-      if (q && a.label.toLowerCase().indexOf(q) === -1 && a.group.toLowerCase().indexOf(q) === -1) return false;
+    var query = (searchEl.value || "").toLowerCase();
+    return ACTIONS.filter(function (action) {
+      if (state.settings[action.id] === false) return false;
+      if (
+        query &&
+        action.label.toLowerCase().indexOf(query) === -1 &&
+        action.group.toLowerCase().indexOf(query) === -1
+      ) {
+        return false;
+      }
       return true;
     });
   }
 
   function renderList() {
-    var list = visibleActions();
+    var actions = visibleActions();
     listEl.textContent = "";
     itemButtons = [];
     activeIndex = -1;
-    if (!list.length) {
+    if (!actions.length) {
       var empty = document.createElement("div");
       empty.className = "empty";
       empty.textContent = "No matching actions.";
       listEl.appendChild(empty);
       return;
     }
+
+    // Group by declaration order.
     var groups = [];
-    list.forEach(function (a) {
-      var g = groups.filter(function (x) {
-        return x.name === a.group;
+    actions.forEach(function (action) {
+      var group = groups.filter(function (candidate) {
+        return candidate.name === action.group;
       })[0];
-      if (!g) {
-        g = { name: a.group, items: [] };
-        groups.push(g);
+      if (!group) {
+        group = { name: action.group, items: [] };
+        groups.push(group);
       }
-      g.items.push(a);
+      group.items.push(action);
     });
-    groups.forEach(function (g) {
+
+    groups.forEach(function (group) {
       if (state.order && state.order.length) {
-        g.items.sort(function (a, b) {
-          var ia = state.order.indexOf(a.id);
-          var ib = state.order.indexOf(b.id);
-          if (ia === -1) ia = 9999;
-          if (ib === -1) ib = 9999;
-          return ia - ib;
+        group.items.sort(function (a, b) {
+          var indexA = state.order.indexOf(a.id);
+          var indexB = state.order.indexOf(b.id);
+          if (indexA === -1) indexA = ORDER_UNSET_INDEX;
+          if (indexB === -1) indexB = ORDER_UNSET_INDEX;
+          return indexA - indexB;
         });
       }
     });
-    groups.forEach(function (g) {
-      var blocks = document.createElement("div");
-      blocks.className = "grp";
-      var h = document.createElement("h4");
-      h.textContent = g.name;
-      h.style.color = groupColor(g.name);
-      blocks.appendChild(h);
-      g.items.forEach(function (a) {
-        var b = document.createElement("button");
-        b.className = "item";
-        b.innerHTML = '<span class="dot" style="background:' + groupColor(g.name) + '"></span><span>' + a.label + "</span>";
-        b.addEventListener("click", function () {
+
+    groups.forEach(function (group) {
+      var block = document.createElement("div");
+      block.className = "grp";
+      var heading = document.createElement("h4");
+      heading.textContent = group.name;
+      heading.style.color = groupColor(group.name);
+      block.appendChild(heading);
+
+      group.items.forEach(function (action) {
+        var button = document.createElement("button");
+        button.className = "item";
+
+        var dot = document.createElement("span");
+        dot.className = "dot";
+        dot.style.background = groupColor(group.name);
+        var label = document.createElement("span");
+        label.textContent = action.label;
+        button.appendChild(dot);
+        button.appendChild(label);
+
+        button.addEventListener("click", function () {
           // Close the pane first; any input/output modal is shown independently.
           panel.classList.add("hidden");
-          runAction(a, b);
+          runAction(action, button);
         });
-        blocks.appendChild(b);
-        itemButtons.push(b);
+        block.appendChild(button);
+        itemButtons.push(button);
       });
-      listEl.appendChild(blocks);
+
+      listEl.appendChild(block);
     });
   }
 
+  /** Move the keyboard highlight to item index `i` (wraps around). */
   function setActive(i) {
     if (!itemButtons.length) return;
     activeIndex = (i + itemButtons.length) % itemButtons.length;
-    itemButtons.forEach(function (b, idx) {
-      b.classList.toggle("active", idx === activeIndex);
+    itemButtons.forEach(function (button, idx) {
+      button.classList.toggle("active", idx === activeIndex);
     });
     itemButtons[activeIndex].scrollIntoView({ block: "nearest" });
   }
@@ -375,11 +492,12 @@
   function openPanel() {
     panel.classList.remove("hidden");
     panel.classList.remove("opening");
-    void panel.offsetWidth;
+    void panel.offsetWidth; // force reflow so the animation restarts
     panel.classList.add("opening");
     renderList();
     searchEl.focus();
   }
+
   function togglePanel() {
     if (panel.classList.contains("hidden")) openPanel();
     else panel.classList.add("hidden");
@@ -390,54 +508,72 @@
     panel.classList.add("hidden");
   });
   panel.querySelector('[data-act="theme"]').addEventListener("click", function () {
-    setTheme(state.theme === "dark" ? "light" : "dark", true);
+    setTheme(state.theme === PP.THEME.DARK ? PP.THEME.LIGHT : PP.THEME.DARK, true);
   });
   panel.querySelector('[data-act="options"]').addEventListener("click", function () {
     bgSend({ type: PP.MSG.OPEN_OPTIONS }).catch(function () {
       try {
         chrome.runtime.openOptionsPage();
-      } catch (e) {}
+      } catch (e) {
+        /* options page unavailable */
+      }
     });
   });
   searchEl.addEventListener("input", renderList);
-  searchEl.addEventListener("keydown", function (e) {
-    if (e.key === "ArrowDown") {
-      e.preventDefault();
+  searchEl.addEventListener("keydown", function (event) {
+    if (event.key === "ArrowDown") {
+      event.preventDefault();
       setActive(activeIndex + 1);
-    } else if (e.key === "ArrowUp") {
-      e.preventDefault();
+    } else if (event.key === "ArrowUp") {
+      event.preventDefault();
       setActive(activeIndex - 1);
-    } else if (e.key === "Enter") {
-      e.preventDefault();
+    } else if (event.key === "Enter") {
+      event.preventDefault();
       if (activeIndex >= 0 && itemButtons[activeIndex]) itemButtons[activeIndex].click();
       else if (itemButtons[0]) itemButtons[0].click();
-    } else if (e.key === "Escape") {
+    } else if (event.key === "Escape") {
       panel.classList.add("hidden");
     }
   });
 
-  // ---- theme -----------------------------------------------------------
+  /* ------------------------------------------------------------------ *
+   * Theme
+   * ------------------------------------------------------------------ */
+
   function setTheme(theme, persist) {
-    state.theme = theme === "light" ? "light" : "dark";
-    wrap.classList.toggle("light", state.theme === "light");
-    panel.querySelector('[data-act="theme"]').innerHTML = state.theme === "light" ? "&#9790;" : "&#9788;";
+    state.theme = theme === PP.THEME.LIGHT ? PP.THEME.LIGHT : PP.THEME.DARK;
+    wrap.classList.toggle("light", state.theme === PP.THEME.LIGHT);
+    panel.querySelector('[data-act="theme"]').innerHTML =
+      state.theme === PP.THEME.LIGHT ? "&#9790;" : "&#9788;";
     if (persist) syncSet({ [PP.SYNC.THEME]: state.theme });
   }
 
-  // ---- toast -----------------------------------------------------------
+  /* ------------------------------------------------------------------ *
+   * Toast
+   * ------------------------------------------------------------------ */
+
   function toast(message, level) {
-    var old = toastLayer.querySelector(".toast");
-    if (old) old.remove();
-    var t = document.createElement("div");
-    t.className = "toast " + (level || "info");
-    t.textContent = message;
-    toastLayer.appendChild(t);
+    var existing = toastLayer.querySelector(".toast");
+    if (existing) existing.remove();
+    var node = document.createElement("div");
+    node.className = "toast " + (level || "info");
+    node.textContent = message;
+    toastLayer.appendChild(node);
     setTimeout(function () {
-      t.remove();
-    }, 5000);
+      node.remove();
+    }, TOAST_DURATION_MS);
   }
 
-  // ---- modals ----------------------------------------------------------
+  /* ------------------------------------------------------------------ *
+   * Modals (pin/pop/drag) + output/table renderers
+   * ------------------------------------------------------------------ */
+
+  /**
+   * Open a modal and hand its content box to `buildBody`.
+   * @param {function(HTMLElement, function): void} buildBody
+   * @param {{wide?: boolean}} [opts]
+   * @returns {HTMLElement} the modal element
+   */
   function openModal(buildBody, opts) {
     opts = opts || {};
     var modal = document.createElement("div");
@@ -446,35 +582,35 @@
     box.className = "box" + (opts.wide ? " wide" : "");
     modal.appendChild(box);
 
-    var ctl = document.createElement("div");
-    ctl.className = "modalctl";
-    var pin = document.createElement("button");
-    pin.type = "button";
-    pin.title = "Pin: keep open when clicking outside";
-    pin.textContent = "Pin";
-    var pop = document.createElement("button");
-    pop.type = "button";
-    pop.title = "Pop out: float over the page without blocking it";
-    pop.textContent = "Pop";
-    ctl.appendChild(pin);
-    ctl.appendChild(pop);
-    box.appendChild(ctl);
+    var controls = document.createElement("div");
+    controls.className = "modalctl";
+    var pinButton = document.createElement("button");
+    pinButton.type = "button";
+    pinButton.title = "Pin: keep open when clicking outside";
+    pinButton.textContent = "Pin";
+    var popButton = document.createElement("button");
+    popButton.type = "button";
+    popButton.title = "Pop out: float over the page without blocking it";
+    popButton.textContent = "Pop";
+    controls.appendChild(pinButton);
+    controls.appendChild(popButton);
+    box.appendChild(controls);
 
     var content = document.createElement("div");
     content.className = "modal-content";
     box.appendChild(content);
 
-    pin.addEventListener("click", function () {
+    pinButton.addEventListener("click", function () {
       var on = modal.classList.toggle("pinned");
-      pin.textContent = on ? "Pinned" : "Pin";
+      pinButton.textContent = on ? "Pinned" : "Pin";
     });
-    pop.addEventListener("click", function () {
+    popButton.addEventListener("click", function () {
       var on = modal.classList.toggle("popped");
-      pop.textContent = on ? "Dock" : "Pop";
+      popButton.textContent = on ? "Dock" : "Pop";
       if (on) {
-        var r = box.getBoundingClientRect();
-        box.style.left = Math.max(8, r.left) + "px";
-        box.style.top = Math.max(8, r.top) + "px";
+        var rect = box.getBoundingClientRect();
+        box.style.left = Math.max(8, rect.left) + "px";
+        box.style.top = Math.max(8, rect.top) + "px";
       } else {
         box.style.left = "";
         box.style.top = "";
@@ -482,37 +618,39 @@
     });
 
     var drag = null;
-    box.addEventListener("mousedown", function (e) {
+    box.addEventListener("mousedown", function (event) {
       if (!modal.classList.contains("popped")) return;
-      var tag = (e.target.tagName || "").toLowerCase();
+      var tag = (event.target.tagName || "").toLowerCase();
       if (tag === "input" || tag === "select" || tag === "textarea" || tag === "button" || tag === "a" || tag === "label") {
         return;
       }
-      var r = box.getBoundingClientRect();
-      drag = { dx: e.clientX - r.left, dy: e.clientY - r.top };
-      e.preventDefault();
+      var rect = box.getBoundingClientRect();
+      drag = { dx: event.clientX - rect.left, dy: event.clientY - rect.top };
+      event.preventDefault();
     });
-    document.addEventListener("mousemove", function (e) {
+    document.addEventListener("mousemove", function (event) {
       if (!drag) return;
-      box.style.left = Math.max(0, e.clientX - drag.dx) + "px";
-      box.style.top = Math.max(0, e.clientY - drag.dy) + "px";
+      box.style.left = Math.max(0, event.clientX - drag.dx) + "px";
+      box.style.top = Math.max(0, event.clientY - drag.dy) + "px";
     });
     document.addEventListener("mouseup", function () {
       drag = null;
     });
 
-    modal.addEventListener("click", function (e) {
+    modal.addEventListener("click", function (event) {
       if (
-        e.target === modal &&
+        event.target === modal &&
         !modal.classList.contains("pinned") &&
         !modal.classList.contains("popped")
       ) {
         modal.remove();
       }
     });
+
     function close() {
       modal.remove();
     }
+
     buildBody(content, close);
     wrap.appendChild(modal);
     var first = content.querySelector("input,textarea");
@@ -520,61 +658,66 @@
     return modal;
   }
 
+  /** Render a value as a chip list / <pre> / plain text node. */
   function valueNode(value) {
-    var v = document.createElement("div");
-    v.className = "v";
+    var container = document.createElement("div");
+    container.className = "v";
     if (Array.isArray(value)) {
-      if (!value.length) v.textContent = "(none)";
-      else
+      if (!value.length) {
+        container.textContent = "(none)";
+      } else {
         value.forEach(function (item) {
           var chip = document.createElement("span");
           chip.className = "chip";
           chip.textContent = item;
-          v.appendChild(chip);
+          container.appendChild(chip);
         });
-    } else if (typeof value === "string" && value.length > 400) {
+      }
+    } else if (typeof value === "string" && value.length > LONG_VALUE_THRESHOLD) {
       var pre = document.createElement("pre");
       pre.textContent = value;
-      v.appendChild(pre);
+      container.appendChild(pre);
     } else {
-      v.textContent = value == null ? "" : String(value);
+      container.textContent = value == null ? "" : String(value);
     }
-    return v;
+    return container;
   }
 
+  /** A small "copy" affordance bound to a value. */
   function copyBtn(text) {
-    var c = document.createElement("span");
-    c.className = "cp";
-    c.textContent = "copy";
-    c.addEventListener("click", function () {
+    var button = document.createElement("span");
+    button.className = "cp";
+    button.textContent = "copy";
+    button.addEventListener("click", function () {
       copyText(String(text)).then(function () {
         toast("Copied to clipboard.", "success");
       });
     });
-    return c;
+    return button;
   }
 
+  /** Render a `{ title, description, items }` result dialog. */
   function showOutput(output) {
     openModal(function (box, close) {
-      var h = document.createElement("h3");
-      h.textContent = output.title || "Result";
-      box.appendChild(h);
+      var heading = document.createElement("h3");
+      heading.textContent = output.title || "Result";
+      box.appendChild(heading);
       if (output.description) {
-        var d = document.createElement("p");
-        d.className = "desc";
-        d.textContent = output.description;
-        box.appendChild(d);
+        var description = document.createElement("p");
+        description.className = "desc";
+        description.textContent = output.description;
+        box.appendChild(description);
       }
       (output.items || []).forEach(function (item) {
         var row = document.createElement("div");
         row.className = "out";
-        var k = document.createElement("div");
-        k.className = "k";
-        k.appendChild(document.createTextNode(item.label));
+        var key = document.createElement("div");
+        key.className = "k";
+        key.appendChild(document.createTextNode(item.label));
         if (!Array.isArray(item.value) && typeof item.value !== "object") {
-          k.appendChild(copyBtn(item.value == null ? "" : item.value));
+          key.appendChild(copyBtn(item.value == null ? "" : item.value));
         }
-        row.appendChild(k);
+        row.appendChild(key);
         row.appendChild(valueNode(item.value));
         box.appendChild(row);
       });
@@ -589,18 +732,20 @@
     });
   }
 
+  /** Render a `{ title, columns, rows }` table dialog (filter/CSV/copy). */
   function showTable(table) {
     openModal(
       function (box, close) {
-        var h = document.createElement("h3");
-        h.textContent = table.title || "Result";
-        box.appendChild(h);
+        var heading = document.createElement("h3");
+        heading.textContent = table.title || "Result";
+        box.appendChild(heading);
         if (table.description) {
-          var d = document.createElement("p");
-          d.className = "desc";
-          d.textContent = table.description;
-          box.appendChild(d);
+          var description = document.createElement("p");
+          description.className = "desc";
+          description.textContent = table.description;
+          box.appendChild(description);
         }
+
         var filter = null;
         if (table.searchable) {
           filter = document.createElement("input");
@@ -608,57 +753,79 @@
           filter.placeholder = "Filter...";
           box.appendChild(filter);
         }
+
         var tbl = document.createElement("table");
-        var hasUrl = (table.rows || []).some(function (r) {
-          return r.url;
+        var hasUrl = (table.rows || []).some(function (row) {
+          return row.url;
         });
+
         var thead = document.createElement("thead");
-        var htr = document.createElement("tr");
-        (table.columns || []).forEach(function (col) {
+        var headRow = document.createElement("tr");
+        (table.columns || []).forEach(function (column) {
           var th = document.createElement("th");
-          th.textContent = col.label;
-          htr.appendChild(th);
+          th.textContent = column.label;
+          headRow.appendChild(th);
         });
         if (hasUrl) {
-          var thx = document.createElement("th");
-          htr.appendChild(thx);
+          headRow.appendChild(document.createElement("th"));
         }
-        thead.appendChild(htr);
+        thead.appendChild(headRow);
         tbl.appendChild(thead);
+
         var tbody = document.createElement("tbody");
         tbl.appendChild(tbody);
 
         function renderRows() {
-          var q = filter ? (filter.value || "").toLowerCase() : "";
+          var query = filter ? (filter.value || "").toLowerCase() : "";
           var lastGroup = null;
           tbody.textContent = "";
           (table.rows || []).forEach(function (row) {
             var text = (table.columns || [])
-              .map(function (c) {
-                return row[c.key] == null ? "" : String(row[c.key]);
+              .map(function (column) {
+                return row[column.key] == null ? "" : String(row[column.key]);
               })
               .join(" ");
-            if (table.groupBy) text += " " + (row[table.groupBy] == null ? "" : String(row[table.groupBy]));
-            if (q && text.toLowerCase().indexOf(q) === -1) return;
             if (table.groupBy) {
-              var g = row[table.groupBy];
-              if (g !== lastGroup) {
-                lastGroup = g;
-                var gtr = document.createElement("tr");
-                var gtd = document.createElement("td");
-                gtd.className = "grouphead";
-                gtd.colSpan = (table.columns || []).length + (hasUrl ? 1 : 0);
-                gtd.textContent = g;
-                gtr.appendChild(gtd);
-                tbody.appendChild(gtr);
+              text += " " + (row[table.groupBy] == null ? "" : String(row[table.groupBy]));
+            }
+            if (query && text.toLowerCase().indexOf(query) === -1) return;
+
+            if (table.groupBy) {
+              var groupValue = row[table.groupBy];
+              if (groupValue !== lastGroup) {
+                lastGroup = groupValue;
+                var groupRow = document.createElement("tr");
+                var groupCell = document.createElement("td");
+                groupCell.className = "grouphead";
+                groupCell.colSpan = (table.columns || []).length + (hasUrl ? 1 : 0);
+                groupCell.textContent = groupValue;
+                groupRow.appendChild(groupCell);
+                tbody.appendChild(groupRow);
               }
             }
+
             var tr = document.createElement("tr");
-            (table.columns || []).forEach(function (col) {
+            (table.columns || []).forEach(function (column) {
               var td = document.createElement("td");
-              td.textContent = row[col.key] == null ? "" : String(row[col.key]);
-              if (table.copyKey === col.key) {
-                td.className = "copy";
+              td.className = "col-" + column.key;
+              // The text lives in a span so a column can cap its own width.
+              // `max-width` on the `td` itself is unreliable with
+              // `table-layout:auto`, whereas the inline-block span honours it.
+              var cell = document.createElement("span");
+              cell.className = "cell";
+              var cellText = row[column.key] == null ? "" : String(row[column.key]);
+              cell.textContent = cellText;
+              // A per-column `maxWidthPx` stops one long identifier or value
+              // from stretching the whole table. The full text stays reachable
+              // through the tooltip and the table's copy/CSV exports.
+              if (column.maxWidthPx) {
+                cell.classList.add("truncate");
+                cell.style.maxWidth = column.maxWidthPx + "px";
+                cell.title = cellText;
+              }
+              td.appendChild(cell);
+              if (table.copyKey === column.key) {
+                td.classList.add("copy");
                 td.title = "Click to copy";
                 td.addEventListener("click", function () {
                   copyText(td.textContent).then(function () {
@@ -668,56 +835,76 @@
               }
               tr.appendChild(td);
             });
+
             if (hasUrl) {
-              var tdo = document.createElement("td");
+              var urlCell = document.createElement("td");
               if (row.url) {
-                var ob = document.createElement("button");
-                ob.className = "mini";
-                ob.textContent = "Open";
-                ob.addEventListener("click", function () {
+                var openButton = document.createElement("button");
+                openButton.className = "mini";
+                openButton.textContent = "Open";
+                openButton.addEventListener("click", function () {
                   send("openUrl", { url: row.url }).catch(function (err) {
                     toast(err.message, "error");
                   });
                 });
-                tdo.appendChild(ob);
+                urlCell.appendChild(openButton);
               }
-              tr.appendChild(tdo);
+              tr.appendChild(urlCell);
             }
+
             if (table.rowDetail && row._detail) {
               tr.style.cursor = "pointer";
               tr.title = "Click for details";
-              tr.addEventListener("click", function (ev) {
-                if (ev.target.closest && ev.target.closest("button")) return;
+              tr.addEventListener("click", function (event) {
+                if (event.target.closest && event.target.closest("button")) return;
                 showOutput({
                   title: String(row[table.columns[0].key] || "Detail"),
                   items: row._detail
                 });
               });
             }
+
             tbody.appendChild(tr);
           });
         }
+
         renderRows();
         if (filter) filter.addEventListener("input", renderRows);
         box.appendChild(tbl);
 
-        var foot = document.createElement("div");
-        foot.className = "foot split";
+        var actionBar = document.createElement("div");
+        actionBar.className = "actions";
         var count = document.createElement("span");
         count.className = "muted";
         count.textContent = (table.rows || []).length + " row(s)";
-        var right = document.createElement("span");
-        var csvBtn = document.createElement("button");
-        csvBtn.textContent = "CSV";
-        csvBtn.addEventListener("click", function () {
-          function q(v) {
-            v = v == null ? "" : String(v);
-            return '"' + v.replace(/"/g, '""') + '"';
+
+        var right = document.createElement("div");
+        right.className = "actions-buttons";
+
+        // Optional one-click copy of the raw data (e.g. the Web API JSON for
+        // "All Fields"). Only rendered when the table carries `rawJson`.
+        if (table.rawJson) {
+          var copyJsonButton = document.createElement("button");
+          copyJsonButton.textContent = "Copy JSON";
+          copyJsonButton.addEventListener("click", function () {
+            copyText(table.rawJson).then(function () {
+              toast("Copied raw JSON to clipboard.", "success");
+            });
+          });
+          right.appendChild(copyJsonButton);
+        }
+
+        var csvButton = document.createElement("button");
+        csvButton.textContent = "CSV";
+        csvButton.addEventListener("click", function () {
+          function quote(value) {
+            value = value == null ? "" : String(value);
+            return '"' + value.replace(/"/g, '""') + '"';
           }
           var lines = [
             (table.columns || [])
-              .map(function (c) {
-                return q(c.label);
+              .map(function (column) {
+                return quote(column.label);
               })
               .join(",")
           ];
@@ -727,36 +914,37 @@
             lines.push(
               cells
                 .map(function (td) {
-                  return q(td.textContent);
+                  return quote(td.textContent);
                 })
                 .join(",")
             );
           });
           var blob = new Blob(["\ufeff" + lines.join("\r\n")], { type: "text/csv;charset=utf-8;" });
-          var a = document.createElement("a");
-          a.href = URL.createObjectURL(blob);
-          a.download = "power-pane-export.csv";
-          document.body.appendChild(a);
-          a.click();
-          a.remove();
+          var anchor = document.createElement("a");
+          anchor.href = URL.createObjectURL(blob);
+          anchor.download = "power-pane-export.csv";
+          document.body.appendChild(anchor);
+          anchor.click();
+          anchor.remove();
           setTimeout(function () {
-            URL.revokeObjectURL(a.href);
+            URL.revokeObjectURL(anchor.href);
           }, 1500);
         });
-        right.appendChild(csvBtn);
-        var copyAll = document.createElement("button");
-        copyAll.textContent = "Copy table";
-        copyAll.addEventListener("click", function () {
+        right.appendChild(csvButton);
+
+        var copyAllButton = document.createElement("button");
+        copyAllButton.textContent = "Copy table";
+        copyAllButton.addEventListener("click", function () {
           var lines = [];
           lines.push(
             (table.columns || [])
-              .map(function (c) {
-                return c.label;
+              .map(function (column) {
+                return column.label;
               })
               .join("\t")
           );
-          var trs = [].slice.call(tbody.querySelectorAll("tr"));
-          trs.forEach(function (tr) {
+          var rows = [].slice.call(tbody.querySelectorAll("tr"));
+          rows.forEach(function (tr) {
             var cells = [].slice.call(tr.querySelectorAll("td"));
             if (hasUrl) cells.pop();
             lines.push(
@@ -768,32 +956,38 @@
             );
           });
           copyText(lines.join("\r\n")).then(function () {
-            toast("Copied " + trs.length + " row(s) to clipboard.", "success");
+            toast("Copied " + rows.length + " row(s) to clipboard.", "success");
           });
         });
-        right.appendChild(copyAll);
+        right.appendChild(copyAllButton);
+
         var ok = document.createElement("button");
         ok.className = "primary";
         ok.textContent = "Close";
         ok.addEventListener("click", close);
         right.appendChild(ok);
-        foot.appendChild(count);
-        foot.appendChild(right);
-        box.appendChild(foot);
+
+        actionBar.appendChild(count);
+        actionBar.appendChild(right);
+        // Keep the action bar at the top of the dialog so copy/export are
+        // reachable without scrolling to the bottom of a long table.
+        box.insertBefore(actionBar, filter || tbl);
       },
       { wide: true }
     );
   }
 
+  /** Prompt for an action's inputs, then call `submit(args)`. */
   function promptInputs(action, submit, ctx) {
     openModal(function (box, close) {
-      var h = document.createElement("h3");
-      h.textContent = action.label;
-      box.appendChild(h);
-      var d = document.createElement("p");
-      d.className = "desc";
-      d.textContent = "Fill the inputs and run.";
-      box.appendChild(d);
+      var heading = document.createElement("h3");
+      heading.textContent = action.label;
+      box.appendChild(heading);
+      var description = document.createElement("p");
+      description.className = "desc";
+      description.textContent = "Fill the inputs and run.";
+      box.appendChild(description);
+
       var inputs = [];
       (action.inputs || []).forEach(function (spec) {
         var field = document.createElement("div");
@@ -801,52 +995,60 @@
         var label = document.createElement("label");
         label.textContent = spec.label;
         field.appendChild(label);
-        var el = document.createElement(spec.type === "textarea" ? "textarea" : "input");
-        if (spec.type !== "textarea") el.type = "text";
-        if (spec.placeholder) el.placeholder = spec.placeholder;
-        if (spec.defaultCurrent && ctx && ctx.entityName) el.value = ctx.entityName;
-        field.appendChild(el);
+
+        var input = document.createElement(spec.type === "textarea" ? "textarea" : "input");
+        if (spec.type !== "textarea") input.type = "text";
+        if (spec.placeholder) input.placeholder = spec.placeholder;
+        if (spec.defaultCurrent && ctx && ctx.entityName) input.value = ctx.entityName;
+        field.appendChild(input);
+
         if (spec.entity) {
-          el.setAttribute("autocomplete", "off");
+          input.setAttribute("autocomplete", "off");
           var results = document.createElement("div");
           results.className = "entity-results";
           field.appendChild(results);
-          var etimer = null;
-          el.addEventListener("input", function () {
-            clearTimeout(etimer);
-            var q = el.value.trim();
-            if (q.length < 2) {
+          var debounceTimer = null;
+          input.addEventListener("input", function () {
+            clearTimeout(debounceTimer);
+            var query = input.value.trim();
+            if (query.length < MIN_USER_SEARCH_LENGTH) {
               results.textContent = "";
               return;
             }
-            etimer = setTimeout(function () {
-              send("searchEntities", { query: q })
-                .then(function (r) {
+            debounceTimer = setTimeout(function () {
+              send("searchEntities", { query: query })
+                .then(function (response) {
                   results.textContent = "";
-                  ((r && r.entities) || []).forEach(function (ent) {
-                    var b = document.createElement("button");
-                    b.type = "button";
-                    b.className = "entity-opt";
-                    b.innerHTML =
-                      "<span class='lname'>" +
-                      ent.logical +
-                      "</span><span class='dname'>" +
-                      ent.display +
-                      "</span>";
-                    b.addEventListener("click", function () {
-                      el.value = ent.logical;
+                  ((response && response.entities) || []).forEach(function (entity) {
+                    var option = document.createElement("button");
+                    option.type = "button";
+                    option.className = "entity-opt";
+                    var logicalName = document.createElement("span");
+                    logicalName.className = "lname";
+                    logicalName.textContent = entity.logical;
+                    var displayName = document.createElement("span");
+                    displayName.className = "dname";
+                    displayName.textContent = entity.display;
+                    option.appendChild(logicalName);
+                    option.appendChild(displayName);
+                    option.addEventListener("click", function () {
+                      input.value = entity.logical;
                       results.textContent = "";
                     });
-                    results.appendChild(b);
+                    results.appendChild(option);
                   });
                 })
-                .catch(function () {});
-            }, 250);
+                .catch(function () {
+                  /* entity search failed; leave results empty */
+                });
+            }, ENTITY_SEARCH_DEBOUNCE_MS);
           });
         }
+
         box.appendChild(field);
-        inputs.push({ name: spec.name, el: el });
+        inputs.push({ name: spec.name, el: input });
       });
+
       var foot = document.createElement("div");
       foot.className = "foot";
       var cancel = document.createElement("button");
@@ -857,8 +1059,8 @@
       ok.textContent = "Run";
       ok.addEventListener("click", function () {
         var args = {};
-        inputs.forEach(function (i) {
-          args[i.name] = i.el.value;
+        inputs.forEach(function (field) {
+          args[field.name] = field.el.value;
         });
         close();
         submit(args);
@@ -869,568 +1071,15 @@
     });
   }
 
-  // ---- user permissions (in-app) --------------------------------------
-  function openUserAccess() {
-    openModal(
-      function (box, close) {
-        function esc(s) {
-          return String(s == null ? "" : s).replace(/[&<>]/g, function (c) {
-            return { "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c];
-          });
-        }
-        var h = document.createElement("h3");
-        h.textContent = "User Permissions";
-        box.appendChild(h);
-        var d = document.createElement("p");
-        d.className = "desc";
-        d.textContent = "View and modify a user's roles, teams and business unit. Changes apply immediately.";
-        box.appendChild(d);
+  /* ------------------------------------------------------------------ *
+   * Impersonation badge (owned here because it mutates core DOM)
+   * ------------------------------------------------------------------ */
 
-        var search = document.createElement("input");
-        search.className = "filter";
-        search.placeholder = "Search user by name or email (min 2 chars)";
-        box.appendChild(search);
-        var results = document.createElement("div");
-        box.appendChild(results);
-        var detail = document.createElement("div");
-        box.appendChild(detail);
-
-        var allRoles = [];
-        var allTeams = [];
-        var allBus = [];
-        var metaReady = Promise.all([
-          send("getAllRoles", {}),
-          send("getAllTeams", {}),
-          send("getBusinessUnits", {})
-        ])
-          .then(function (a) {
-            allRoles = (a[0] && a[0].items) || [];
-            allTeams = (a[1] && a[1].items) || [];
-            allBus = (a[2] && a[2].items) || [];
-          })
-          .catch(function () {});
-
-        function matches(text, query) {
-          if (!query) return true;
-          var terms = String(query)
-            .toLowerCase()
-            .split(/[,;\n]+/)
-            .map(function (t) {
-              return t.trim();
-            })
-            .filter(Boolean);
-          if (!terms.length) return true;
-          var lt = String(text || "").toLowerCase();
-          return terms.some(function (t) {
-            return lt.indexOf(t) > -1;
-          });
-        }
-
-        function loadUser(u) {
-          detail.textContent = "";
-          var loading = document.createElement("div");
-          loading.className = "muted";
-          loading.textContent = "Loading access...";
-          detail.appendChild(loading);
-          Promise.all([send("getUserAccess", { userid: u.systemuserid }), metaReady])
-            .then(function (a) {
-              detail.textContent = "";
-              renderUser(a[0]);
-            })
-            .catch(function (err) {
-              detail.textContent = "";
-              var e = document.createElement("div");
-              e.className = "empty";
-              e.textContent = err.message;
-              detail.appendChild(e);
-            });
-        }
-
-        function renderUser(res) {
-          var userNameMap = {};
-          allRoles.forEach(function (r) {
-            userNameMap[r.id.toLowerCase()] = r.name;
-          });
-          res.roles.forEach(function (r) {
-            userNameMap[r.id.toLowerCase()] = r.name;
-          });
-          var teamNameMap = {};
-          allTeams.forEach(function (t) {
-            teamNameMap[t.id.toLowerCase()] = t.name;
-          });
-          res.teams.forEach(function (t) {
-            teamNameMap[t.id.toLowerCase()] = t.name;
-          });
-
-          var origRoles = {};
-          res.roles.forEach(function (r) {
-            origRoles[r.id.toLowerCase()] = true;
-          });
-          var curRoles = Object.assign({}, origRoles);
-          var origTeams = {};
-          res.teams.forEach(function (t) {
-            origTeams[t.id.toLowerCase()] = true;
-          });
-          var curTeams = Object.assign({}, origTeams);
-          var origBu = res.businessUnit ? res.businessUnit.id.toLowerCase() : "";
-          var curBu = origBu;
-
-          var head = document.createElement("div");
-          head.className = "ua-head";
-          head.innerHTML =
-            "<b>" + esc(res.user.name) + "</b><div class='muted'>" + esc(res.user.email || "") + "</div>";
-          detail.appendChild(head);
-
-          var buRow = document.createElement("div");
-          buRow.className = "ua-row";
-          var buK = document.createElement("div");
-          buK.className = "ua-k";
-          buK.textContent = "Business Unit";
-          var buV = document.createElement("div");
-          buV.className = "ua-v";
-          var buSel = document.createElement("select");
-          allBus.forEach(function (b) {
-            var o = document.createElement("option");
-            o.value = b.id;
-            o.textContent = b.name;
-            if (b.id.toLowerCase() === curBu) o.selected = true;
-            buSel.appendChild(o);
-          });
-          buSel.addEventListener("change", function () {
-            curBu = buSel.value.toLowerCase();
-            updateDirty();
-          });
-          buV.appendChild(buSel);
-          buRow.appendChild(buK);
-          buRow.appendChild(buV);
-          detail.appendChild(buRow);
-
-          var arTitle = document.createElement("div");
-          arTitle.className = "sect";
-          detail.appendChild(arTitle);
-          var arChips = document.createElement("div");
-          arChips.className = "ua-chips";
-          detail.appendChild(arChips);
-          function renderAssignedRoles() {
-            arChips.textContent = "";
-            var ids = Object.keys(curRoles);
-            arTitle.textContent = "Assigned Roles (" + ids.length + ")";
-            ids.sort().forEach(function (id) {
-              var chip = document.createElement("span");
-              chip.className = "chip";
-              chip.appendChild(document.createTextNode((userNameMap[id] || id) + " "));
-              var x = document.createElement("span");
-              x.textContent = "\u00d7";
-              x.style.cssText = "cursor:pointer;opacity:.7";
-              x.addEventListener("click", function () {
-                delete curRoles[id];
-                renderAssignedRoles();
-                renderRoles();
-                updateDirty();
-              });
-              chip.appendChild(x);
-              arChips.appendChild(chip);
-            });
-            if (!ids.length) {
-              var m = document.createElement("span");
-              m.className = "muted";
-              m.textContent = "None";
-              arChips.appendChild(m);
-            }
-          }
-
-          var rt = document.createElement("div");
-          rt.className = "sect";
-          rt.textContent = "All Roles (this BU)";
-          detail.appendChild(rt);
-          var rsearch = document.createElement("input");
-          rsearch.className = "filter";
-          rsearch.placeholder = "Filter roles (comma = multiple)";
-          detail.appendChild(rsearch);
-          var rl = document.createElement("div");
-          rl.className = "ua-list";
-          detail.appendChild(rl);
-          var roleSrcMap = {};
-          allRoles
-            .filter(function (r) {
-              return !curBu || !r.buId || String(r.buId).toLowerCase() === curBu;
-            })
-            .forEach(function (r) {
-              roleSrcMap[r.id.toLowerCase()] = r;
-            });
-          res.roles.forEach(function (r) {
-            if (!roleSrcMap[r.id.toLowerCase()]) roleSrcMap[r.id.toLowerCase()] = r;
-          });
-          var roleSrc = Object.keys(roleSrcMap).map(function (k) {
-            return roleSrcMap[k];
-          });
-          function renderRoles() {
-            rl.textContent = "";
-            roleSrc
-              .filter(function (r) {
-                return matches(r.name, rsearch.value);
-              })
-              .sort(function (a, b) {
-                return a.name.localeCompare(b.name);
-              })
-              .forEach(function (r) {
-                var lab = document.createElement("label");
-                lab.className = "ua-item";
-                var cb = document.createElement("input");
-                cb.type = "checkbox";
-                cb.checked = !!curRoles[r.id.toLowerCase()];
-                cb.addEventListener("change", function () {
-                  if (cb.checked) curRoles[r.id.toLowerCase()] = true;
-                  else delete curRoles[r.id.toLowerCase()];
-                  renderAssignedRoles();
-                  updateDirty();
-                });
-                lab.appendChild(cb);
-                lab.appendChild(document.createTextNode(r.name));
-                rl.appendChild(lab);
-              });
-          }
-          rsearch.addEventListener("input", renderRoles);
-
-          var atTitle = document.createElement("div");
-          atTitle.className = "sect";
-          detail.appendChild(atTitle);
-          var atChips = document.createElement("div");
-          atChips.className = "ua-chips";
-          detail.appendChild(atChips);
-          function renderAssignedTeams() {
-            atChips.textContent = "";
-            var ids = Object.keys(curTeams);
-            atTitle.textContent = "Teams (" + ids.length + ")";
-            ids.sort().forEach(function (id) {
-              var chip = document.createElement("span");
-              chip.className = "chip";
-              chip.appendChild(document.createTextNode((teamNameMap[id] || id) + " "));
-              var x = document.createElement("span");
-              x.textContent = "\u00d7";
-              x.style.cssText = "cursor:pointer;opacity:.7";
-              x.addEventListener("click", function () {
-                delete curTeams[id];
-                renderAssignedTeams();
-                renderTeams();
-                updateDirty();
-              });
-              chip.appendChild(x);
-              atChips.appendChild(chip);
-            });
-            if (!ids.length) {
-              var m = document.createElement("span");
-              m.className = "muted";
-              m.textContent = "None";
-              atChips.appendChild(m);
-            }
-          }
-
-          var tsearch = document.createElement("input");
-          tsearch.className = "filter";
-          tsearch.placeholder = "Search teams to add (comma = multiple)";
-          detail.appendChild(tsearch);
-          var tlist = document.createElement("div");
-          tlist.className = "ua-list";
-          detail.appendChild(tlist);
-          function renderTeams() {
-            tlist.textContent = "";
-            allTeams
-              .filter(function (t) {
-                return !curTeams[t.id.toLowerCase()];
-              })
-              .filter(function (t) {
-                return matches(t.name, tsearch.value);
-              })
-              .sort(function (a, b) {
-                return a.name.localeCompare(b.name);
-              })
-              .slice(0, 200)
-              .forEach(function (t) {
-                var row = document.createElement("div");
-                row.className = "ua-item";
-                var nm = document.createElement("span");
-                nm.style.flex = "1";
-                nm.textContent = t.name;
-                var add = document.createElement("button");
-                add.className = "mini";
-                add.textContent = "Add";
-                add.addEventListener("click", function () {
-                  curTeams[t.id.toLowerCase()] = true;
-                  teamNameMap[t.id.toLowerCase()] = t.name;
-                  renderAssignedTeams();
-                  renderTeams();
-                  updateDirty();
-                });
-                row.appendChild(nm);
-                row.appendChild(add);
-                tlist.appendChild(row);
-              });
-          }
-          tsearch.addEventListener("input", renderTeams);
-
-          var saveRow = document.createElement("div");
-          saveRow.className = "foot split";
-          detail.appendChild(saveRow);
-          var info = document.createElement("span");
-          info.className = "muted";
-          saveRow.appendChild(info);
-          var saveBtn = document.createElement("button");
-          saveBtn.className = "primary";
-          saveBtn.textContent = "Save";
-          saveRow.appendChild(saveBtn);
-
-          function diff() {
-            var ops = [];
-            Object.keys(curRoles).forEach(function (id) {
-              if (!origRoles[id]) ops.push({ t: "assignRole", id: id });
-            });
-            Object.keys(origRoles).forEach(function (id) {
-              if (!curRoles[id]) ops.push({ t: "removeRole", id: id });
-            });
-            Object.keys(curTeams).forEach(function (id) {
-              if (!origTeams[id]) ops.push({ t: "addTeam", id: id });
-            });
-            Object.keys(origTeams).forEach(function (id) {
-              if (!curTeams[id]) ops.push({ t: "removeTeam", id: id });
-            });
-            if (curBu && curBu !== origBu) ops.push({ t: "bu", id: curBu });
-            return ops;
-          }
-          function updateDirty() {
-            var n = diff().length;
-            info.textContent = n ? n + " pending change(s)" : "No changes";
-            saveBtn.disabled = !n;
-          }
-          saveBtn.addEventListener("click", function () {
-            var ops = diff();
-            if (!ops.length) return;
-            saveBtn.disabled = true;
-            var calls = ops.map(function (op) {
-              if (op.t === "assignRole") return send("assignRole", { userid: res.user.id, roleid: op.id });
-              if (op.t === "removeRole") return send("removeRole", { userid: res.user.id, roleid: op.id });
-              if (op.t === "addTeam") return send("addTeam", { userid: res.user.id, teamid: op.id });
-              if (op.t === "removeTeam") return send("removeTeam", { userid: res.user.id, teamid: op.id });
-              if (op.t === "bu") return send("setBusinessUnit", { userid: res.user.id, buid: op.id });
-              return Promise.resolve();
-            });
-            Promise.all(calls)
-              .then(function () {
-                toast("Saved " + ops.length + " change(s).", "success");
-                loadUser(res.user);
-              })
-              .catch(function (err) {
-                toast(err.message, "error");
-                saveBtn.disabled = false;
-              });
-          });
-
-          renderAssignedRoles();
-          renderRoles();
-          renderAssignedTeams();
-          renderTeams();
-          updateDirty();
-        }
-
-        var timer = null;
-        search.addEventListener("input", function () {
-          clearTimeout(timer);
-          var q = search.value.trim();
-          if (q.length < 2) {
-            results.textContent = "";
-            return;
-          }
-          timer = setTimeout(function () {
-            send("searchUsers", { query: q })
-              .then(function (r) {
-                results.textContent = "";
-                ((r && r.users) || []).slice(0, 15).forEach(function (u) {
-                  var row = document.createElement("div");
-                  row.className = "user";
-                  var meta = document.createElement("div");
-                  meta.className = "meta";
-                  var nm = document.createElement("div");
-                  nm.className = "nm";
-                  nm.textContent = u.fullname || "(no name)";
-                  var em = document.createElement("div");
-                  em.className = "em";
-                  em.textContent = u.internalemailaddress || "";
-                  meta.appendChild(nm);
-                  meta.appendChild(em);
-                  var btn = document.createElement("button");
-                  btn.className = "mini primary";
-                  btn.textContent = "Open";
-                  btn.addEventListener("click", function () {
-                    results.textContent = "";
-                    loadUser(u);
-                  });
-                  row.appendChild(meta);
-                  row.appendChild(btn);
-                  results.appendChild(row);
-                });
-              })
-              .catch(function () {});
-          }, 350);
-        });
-
-        var foot = document.createElement("div");
-        foot.className = "foot";
-        var cl = document.createElement("button");
-        cl.textContent = "Close";
-        cl.addEventListener("click", close);
-        foot.appendChild(cl);
-        box.appendChild(foot);
-      },
-      { wide: true }
-    );
-  }
-
-  // ---- fetchxml snippets ----------------------------------------------
-  function openSnippets() {
-    openModal(function (box, close) {
-      function render() {
-        box.textContent = "";
-        var h = document.createElement("h3");
-        h.textContent = "FetchXML Snippets";
-        box.appendChild(h);
-        var d = document.createElement("p");
-        d.className = "desc";
-        d.textContent = "Save and reuse FetchXML queries.";
-        box.appendChild(d);
-
-        if (!state.snippets.length) {
-          var e = document.createElement("div");
-          e.className = "empty";
-          e.textContent = "No snippets yet.";
-          box.appendChild(e);
-        }
-        state.snippets.forEach(function (s, i) {
-          var row = document.createElement("div");
-          row.className = "srow";
-          var nm = document.createElement("span");
-          nm.className = "nm";
-          nm.textContent = s.name;
-          row.appendChild(nm);
-          var run = document.createElement("button");
-          run.className = "mini";
-          run.textContent = "Run";
-          run.addEventListener("click", function () {
-            close();
-            send("executeFetchXml", { xml: s.xml })
-              .then(function (r) {
-                if (r && r.output) showOutput(r.output);
-                if (r && r.message) toast(r.message, r.level);
-              })
-              .catch(function (err) {
-                toast(err.message, "error");
-              });
-          });
-          var edit = document.createElement("button");
-          edit.className = "mini";
-          edit.textContent = "Edit";
-          edit.addEventListener("click", function () {
-            form(s, i);
-          });
-          var del = document.createElement("button");
-          del.className = "mini";
-          del.textContent = "Del";
-          del.addEventListener("click", function () {
-            state.snippets.splice(i, 1);
-            syncSet({ [PP.SYNC.SNIPPETS]: state.snippets }).then(render);
-          });
-          row.appendChild(run);
-          row.appendChild(edit);
-          row.appendChild(del);
-          box.appendChild(row);
-        });
-
-        var foot = document.createElement("div");
-        foot.className = "foot";
-        var add = document.createElement("button");
-        add.className = "primary";
-        add.textContent = "New";
-        add.addEventListener("click", function () {
-          form(null, -1);
-        });
-        var cl = document.createElement("button");
-        cl.textContent = "Close";
-        cl.addEventListener("click", close);
-        foot.appendChild(add);
-        foot.appendChild(cl);
-        box.appendChild(foot);
-      }
-
-      function form(snippet, index) {
-        box.textContent = "";
-        var h = document.createElement("h3");
-        h.textContent = index >= 0 ? "Edit Snippet" : "New Snippet";
-        box.appendChild(h);
-        var nameField = document.createElement("div");
-        nameField.className = "field";
-        var nl = document.createElement("label");
-        nl.textContent = "Name";
-        var nameInput = document.createElement("input");
-        nameInput.type = "text";
-        nameInput.value = snippet ? snippet.name : "";
-        nameField.appendChild(nl);
-        nameField.appendChild(nameInput);
-        box.appendChild(nameField);
-        var xmlField = document.createElement("div");
-        xmlField.className = "field";
-        var xl = document.createElement("label");
-        xl.textContent = "FetchXML";
-        var xmlArea = document.createElement("textarea");
-        xmlArea.value = snippet ? snippet.xml : "";
-        xmlField.appendChild(xl);
-        xmlField.appendChild(xmlArea);
-        box.appendChild(xmlField);
-        var foot = document.createElement("div");
-        foot.className = "foot";
-        var back = document.createElement("button");
-        back.textContent = "Back";
-        back.addEventListener("click", render);
-        var save = document.createElement("button");
-        save.className = "primary";
-        save.textContent = "Save";
-        save.addEventListener("click", function () {
-          var name = nameInput.value.trim() || "Untitled";
-          if (index >= 0) state.snippets[index] = { name: name, xml: xmlArea.value };
-          else state.snippets.push({ name: name, xml: xmlArea.value });
-          syncSet({ [PP.SYNC.SNIPPETS]: state.snippets }).then(render);
-        });
-        foot.appendChild(back);
-        foot.appendChild(save);
-        box.appendChild(foot);
-        nameInput.focus();
-      }
-
-      render();
-    });
-  }
-
-  // ---- impersonation ---------------------------------------------------
-  var pill = panel.querySelector(".imp-pill");
-
-  function bgSend(message) {
-    return new Promise(function (resolve, reject) {
-      try {
-        chrome.runtime.sendMessage(message, function (res) {
-          if (chrome.runtime.lastError) {
-            reject(new Error(chrome.runtime.lastError.message));
-            return;
-          }
-          if (!res || !res.ok) {
-            reject(new Error((res && res.error) || "Background request failed."));
-            return;
-          }
-          resolve(res);
-        });
-      } catch (e) {
-        reject(e);
-      }
-    });
-  }
-
+  /**
+   * Reflect the current impersonation state onto the pane badge and the
+   * injected navigation button.
+   * @param {{user: {fullname: string}}|null} entry
+   */
   function renderImpersonation(entry) {
     state.impersonation = entry || null;
     if (entry && entry.user) {
@@ -1451,315 +1100,30 @@
     }
   }
 
-  function refreshImpersonation() {
-    return bgSend({ type: PP.MSG.IMP_STATUS, hostname: location.hostname })
-      .then(function (res) {
-        renderImpersonation(res.impersonation);
-        return res.impersonation;
-      })
-      .catch(function () {
-        return null;
-      });
+  /* ------------------------------------------------------------------ *
+   * Local handler + mount-hook registry
+   * ------------------------------------------------------------------ */
+
+  /** Local (non-bridge) action handlers; feature sections register into this. */
+  var localHandlers = {};
+  /** One-time hooks run at the end of mount(); feature sections register here. */
+  var onMountHooks = [];
+
+  function registerLocal(command, handler) {
+    localHandlers[command] = handler;
   }
 
-  function openImpersonate() {
-    refreshImpersonation().then(buildImpersonateModal);
+  function onMount(hook) {
+    onMountHooks.push(hook);
   }
 
-  function userRow(u, onPinChanged) {
-    var row = document.createElement("div");
-    row.className = "user";
-    var meta = document.createElement("div");
-    meta.className = "meta";
-    var nm = document.createElement("div");
-    nm.className = "nm";
-    nm.textContent = u.fullname || "(no name)";
-    var em = document.createElement("div");
-    em.className = "em";
-    em.textContent = u.internalemailaddress || u.domainname || "";
-    meta.appendChild(nm);
-    meta.appendChild(em);
+  // Trivial local action kept in core.
+  registerLocal("advancedSettingsUsers", function () {
+    localSet(PP.LOCAL.AUTO_OPEN_USERS, Date.now());
+    window.open(location.origin + "/main.aspx?settingsonly=true", PP.LOCAL.AUTO_OPEN_USERS);
+    toast("Opening Advanced Settings > Users...", "success");
+  });
 
-    var pinBtn = document.createElement("button");
-    pinBtn.className = "mini";
-    pinBtn.title = isPinned(u) ? "Unpin" : "Pin";
-    pinBtn.textContent = isPinned(u) ? "\u2605" : "\u2606";
-    pinBtn.addEventListener("click", function () {
-      togglePin(u);
-      if (onPinChanged) onPinChanged();
-    });
-
-    var btn = document.createElement("button");
-    btn.className = "mini primary";
-    btn.textContent = "Impersonate";
-    btn.addEventListener("click", function () {
-      startImpersonate(u);
-    });
-
-    row.appendChild(meta);
-    row.appendChild(pinBtn);
-    row.appendChild(btn);
-    return row;
-  }
-
-  function buildImpersonateModal() {
-    openModal(function (box, close) {
-      var h = document.createElement("h3");
-      h.textContent = "Impersonate User";
-      box.appendChild(h);
-      var d = document.createElement("p");
-      d.className = "desc";
-      d.textContent = "Search by name, email or domain. Requires prvActOnBehalfOfAnotherUser.";
-      box.appendChild(d);
-
-      if (state.impersonation && state.impersonation.user) {
-        var bar = document.createElement("div");
-        bar.className = "impbar";
-        var nm = document.createElement("span");
-        nm.className = "nm";
-        nm.textContent = "Active: " + state.impersonation.user.fullname;
-        var stop = document.createElement("button");
-        stop.className = "mini";
-        stop.textContent = "Stop";
-        stop.addEventListener("click", stopImpersonate);
-        bar.appendChild(nm);
-        bar.appendChild(stop);
-        box.appendChild(bar);
-      }
-
-      var quick = document.createElement("div");
-      box.appendChild(quick);
-
-      var search = document.createElement("input");
-      search.className = "filter";
-      search.placeholder = "Name, email or domain (min 2 chars)";
-      box.appendChild(search);
-
-      var results = document.createElement("div");
-      box.appendChild(results);
-
-      function renderQuick() {
-        quick.textContent = "";
-        if (state.pinned.length) {
-          var t1 = document.createElement("div");
-          t1.className = "sect";
-          t1.textContent = "Pinned";
-          quick.appendChild(t1);
-          state.pinned.forEach(function (u) {
-            quick.appendChild(userRow(u, renderQuick));
-          });
-        }
-        var recentOnly = state.recent.filter(function (u) {
-          return !isPinned(u);
-        });
-        if (recentOnly.length) {
-          var t2 = document.createElement("div");
-          t2.className = "sect";
-          t2.textContent = "Recent";
-          quick.appendChild(t2);
-          recentOnly.forEach(function (u) {
-            quick.appendChild(userRow(u, renderQuick));
-          });
-        }
-      }
-      renderQuick();
-
-      var timer = null;
-      function doSearch() {
-        var q = search.value.trim();
-        if (q.length < 2) {
-          results.textContent = "";
-          return;
-        }
-        results.textContent = "";
-        var loading = document.createElement("div");
-        loading.className = "muted";
-        loading.textContent = "Searching...";
-        results.appendChild(loading);
-        send("searchUsers", { query: q })
-          .then(function (res) {
-            var users = (res && res.users) || [];
-            results.textContent = "";
-            var t = document.createElement("div");
-            t.className = "sect";
-            t.textContent = "Search Results";
-            results.appendChild(t);
-            if (!users.length) {
-              var none = document.createElement("div");
-              none.className = "empty";
-              none.textContent = "No users found.";
-              results.appendChild(none);
-              return;
-            }
-            users.forEach(function (u) {
-              results.appendChild(userRow(u, function () {}));
-            });
-          })
-          .catch(function (err) {
-            results.textContent = "";
-            var e = document.createElement("div");
-            e.className = "empty";
-            e.textContent = err.message;
-            results.appendChild(e);
-          });
-      }
-      search.addEventListener("input", function () {
-        clearTimeout(timer);
-        timer = setTimeout(doSearch, 350);
-      });
-
-      var foot = document.createElement("div");
-      foot.className = "foot";
-      var cl = document.createElement("button");
-      cl.textContent = "Close";
-      cl.addEventListener("click", close);
-      foot.appendChild(cl);
-      box.appendChild(foot);
-    });
-  }
-
-  function slimUser(u) {
-    return {
-      systemuserid: u.systemuserid,
-      fullname: u.fullname,
-      internalemailaddress: u.internalemailaddress,
-      domainname: u.domainname,
-      azureactivedirectoryobjectid: u.azureactivedirectoryobjectid
-    };
-  }
-
-  function isPinned(user) {
-    var id = user && user.systemuserid;
-    return !!id && state.pinned.some(function (p) {
-      return p.systemuserid === id;
-    });
-  }
-
-  function togglePin(user) {
-    if (!user || !user.systemuserid) return;
-    if (isPinned(user)) {
-      state.pinned = state.pinned.filter(function (p) {
-        return p.systemuserid !== user.systemuserid;
-      });
-    } else {
-      state.pinned = state.pinned.concat([slimUser(user)]);
-    }
-    localSet(PP.LOCAL.PINNED_USERS, state.pinned);
-  }
-
-  function addRecent(user) {
-    if (!user || !user.systemuserid) return;
-    state.recent = [slimUser(user)]
-      .concat(
-        state.recent.filter(function (u) {
-          return u.systemuserid !== user.systemuserid;
-        })
-      )
-      .slice(0, 3);
-    localSet(PP.LOCAL.RECENT_USERS, state.recent);
-  }
-
-  // Drop the cached identity key so a bypass-cache reload rebuilds it.
-  // NOTE: intentionally does NOT wipe Cache Storage / IndexedDB - doing so
-  // corrupts the D365 client's local store and leaves it stuck on "Loading...".
-  function clearIdentityCaches() {
-    try {
-      localStorage.removeItem("Microsoft.Crm.BusinessProcessClientCache");
-      for (var i = localStorage.length - 1; i >= 0; i--) {
-        var k = localStorage.key(i);
-        if (/^Form:(userquery|savedquery)$/i.test(k) || /savedquery|viewcache/i.test(k)) {
-          localStorage.removeItem(k);
-        }
-      }
-    } catch (e) {}
-    return Promise.resolve();
-  }
-
-  function applyImpersonation(user) {
-    return bgSend({ type: PP.MSG.IMP_START, hostname: location.hostname, user: user })
-      .then(function () {
-        renderImpersonation({ user: user });
-        addRecent(user);
-        return clearIdentityCaches();
-      })
-      .then(function () {
-        return new Promise(function (r) {
-          setTimeout(r, 300);
-        });
-      })
-      .then(function () {
-        return bgSend({ type: PP.MSG.RELOAD_TAB });
-      })
-      .then(function () {
-        toast("Impersonating " + (user.fullname || "user") + ". Reloading...", "success");
-      });
-  }
-
-  function startImpersonate(user) {
-    if (!user.azureactivedirectoryobjectid) {
-      toast("User has no Azure AD object id; cannot impersonate.", "error");
-      return;
-    }
-    applyImpersonation(user).catch(function (err) {
-      toast(err.message, "error");
-    });
-  }
-
-  function stopImpersonate() {
-    bgSend({ type: PP.MSG.IMP_STOP, hostname: location.hostname })
-      .then(function () {
-        renderImpersonation(null);
-        return clearIdentityCaches();
-      })
-      .then(function () {
-        return new Promise(function (r) {
-          setTimeout(r, 300);
-        });
-      })
-      .then(function () {
-        return bgSend({ type: PP.MSG.RELOAD_TAB });
-      })
-      .then(function () {
-        toast("Impersonation stopped. Reloading...", "success");
-      })
-      .catch(function (err) {
-        toast(err.message, "error");
-      });
-  }
-
-  function openDnrRules() {
-    bgSend({ type: PP.MSG.IMP_RULES })
-      .then(function (res) {
-        var rules = (res && res.rules) || [];
-        showOutput({
-          title: "Impersonation Debug",
-          description: rules.length + " session rule(s)",
-          items: [
-            { label: "Rules", value: JSON.stringify(rules, null, 2) },
-            { label: "Hosts", value: JSON.stringify((res && res.hosts) || {}, null, 2) },
-            { label: "Tabs", value: JSON.stringify((res && res.tabs) || {}, null, 2) }
-          ]
-        });
-      })
-      .catch(function (err) {
-        toast(err.message, "error");
-      });
-  }
-
-  var localHandlers = {
-    snippets: openSnippets,
-    impersonate: openImpersonate,
-    impersonateStop: stopImpersonate,
-    dnrRules: openDnrRules,
-    userAccess: openUserAccess,
-    advancedSettingsUsers: function () {
-      localSet(PP.LOCAL.AUTO_OPEN_USERS, Date.now());
-      window.open(location.origin + "/main.aspx?settingsonly=true", PP.LOCAL.AUTO_OPEN_USERS);
-      toast("Opening Advanced Settings > Users...", "success");
-    }
-  };
-
-  // ---- run -------------------------------------------------------------
   function runAction(action, button) {
     function execute(args) {
       if (action.local && localHandlers[action.command]) {
@@ -1780,9 +1144,10 @@
           button.disabled = false;
         });
     }
+
     if (action.inputs && action.inputs.length) {
-      var needsCurrent = action.inputs.some(function (i) {
-        return i.defaultCurrent;
+      var needsCurrent = action.inputs.some(function (input) {
+        return input.defaultCurrent;
       });
       if (needsCurrent) {
         send("currentContext", {})
@@ -1795,32 +1160,38 @@
       } else {
         promptInputs(action, execute, {});
       }
-    } else execute({});
+    } else {
+      execute({});
+    }
   }
 
-  // ---- drag & resize ---------------------------------------------------
+  /* ------------------------------------------------------------------ *
+   * Drag & resize
+   * ------------------------------------------------------------------ */
+
   var dragState = null;
-  var hd = panel.querySelector(".hd");
-  hd.addEventListener("mousedown", function (e) {
-    if (e.target.closest("button")) return;
+  var panelHeader = panel.querySelector(".hd");
+  panelHeader.addEventListener("mousedown", function (event) {
+    if (event.target.closest("button")) return;
     var rect = panel.getBoundingClientRect();
-    dragState = { dx: e.clientX - rect.left, dy: e.clientY - rect.top };
+    dragState = { dx: event.clientX - rect.left, dy: event.clientY - rect.top };
     panel.style.left = rect.left + "px";
     panel.style.top = rect.top + "px";
     panel.style.right = "auto";
     panel.style.bottom = "auto";
-    e.preventDefault();
+    event.preventDefault();
   });
-  document.addEventListener("mousemove", function (e) {
+  document.addEventListener("mousemove", function (event) {
     if (!dragState) return;
-    panel.style.left = Math.max(0, e.clientX - dragState.dx) + "px";
-    panel.style.top = Math.max(minPanelTop(), e.clientY - dragState.dy) + "px";
+    panel.style.left = Math.max(0, event.clientX - dragState.dx) + "px";
+    panel.style.top = Math.max(headerBottom(), event.clientY - dragState.dy) + "px";
   });
   document.addEventListener("mouseup", function () {
     if (!dragState) return;
     dragState = null;
     saveLayout();
   });
+
   var resizeObserver =
     typeof ResizeObserver !== "undefined"
       ? new ResizeObserver(function () {
@@ -1834,27 +1205,27 @@
     state.layout = { left: rect.left, top: rect.top, width: rect.width, height: rect.height };
     localSet(PP.LOCAL.LAYOUT, state.layout);
   }
-  function minPanelTop() {
-    return headerBottom();
-  }
 
   function applyLayout() {
-    var L = state.layout;
-    if (!L) return;
-    if (L.left != null) {
-      panel.style.left = Math.max(0, L.left) + "px";
+    var layout = state.layout;
+    if (!layout) return;
+    if (layout.left != null) {
+      panel.style.left = Math.max(0, layout.left) + "px";
       panel.style.right = "auto";
     }
-    if (L.top != null) {
-      panel.style.top = Math.max(minPanelTop(), L.top) + "px";
+    if (layout.top != null) {
+      panel.style.top = Math.max(headerBottom(), layout.top) + "px";
       panel.style.bottom = "auto";
     }
-    if (L.width) panel.style.width = L.width + "px";
-    if (L.height) panel.style.height = L.height + "px";
+    if (layout.width) panel.style.width = layout.width + "px";
+    if (layout.height) panel.style.height = layout.height + "px";
   }
 
-  // ---- shortcuts -------------------------------------------------------
-  function matchCombo(e, combo) {
+  /* ------------------------------------------------------------------ *
+   * Keyboard shortcuts
+   * ------------------------------------------------------------------ */
+
+  function matchCombo(event, combo) {
     if (!combo) return false;
     var parts = combo.split("+");
     var key = parts.pop().toLowerCase();
@@ -1862,27 +1233,29 @@
     var needCtrl = parts.indexOf("Ctrl") > -1;
     var needShift = parts.indexOf("Shift") > -1;
     var needMeta = parts.indexOf("Meta") > -1;
-    if (e.altKey !== needAlt || e.ctrlKey !== needCtrl || e.shiftKey !== needShift || e.metaKey !== needMeta) return false;
-    var k = (e.key || "").toLowerCase();
-    return k === key || k === " " + key;
+    if (event.altKey !== needAlt || event.ctrlKey !== needCtrl || event.shiftKey !== needShift || event.metaKey !== needMeta) {
+      return false;
+    }
+    var pressed = (event.key || "").toLowerCase();
+    return pressed === key || pressed === " " + key;
   }
 
-  document.addEventListener("keydown", function (e) {
-    if (e.altKey && !e.ctrlKey && !e.metaKey && (e.key === "p" || e.key === "P")) {
-      e.preventDefault();
+  document.addEventListener("keydown", function (event) {
+    if (event.altKey && !event.ctrlKey && !event.metaKey && (event.key === "p" || event.key === "P")) {
+      event.preventDefault();
       togglePanel();
       return;
     }
-    var target = e.target;
+    var target = event.target;
     var typing = target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable);
     if (typing) return;
     for (var id in state.shortcuts) {
-      if (matchCombo(e, state.shortcuts[id])) {
-        var action = ACTIONS.filter(function (a) {
-          return a.id === id && state.settings[a.id] !== false;
+      if (matchCombo(event, state.shortcuts[id])) {
+        var action = ACTIONS.filter(function (candidate) {
+          return candidate.id === id && state.settings[candidate.id] !== false;
         })[0];
         if (action) {
-          e.preventDefault();
+          event.preventDefault();
           runAction(action, { disabled: false });
         }
         return;
@@ -1890,10 +1263,17 @@
     }
   });
 
-  // ---- toolbar ---------------------------------------------------------
-  chrome.runtime.onMessage.addListener(function (msg) {
-    if (msg && msg.type === PP.MSG.PANE_TOGGLE) togglePanel();
+  /* ------------------------------------------------------------------ *
+   * Service-worker toolbar toggle
+   * ------------------------------------------------------------------ */
+
+  chrome.runtime.onMessage.addListener(function (message) {
+    if (message && message.type === PP.MSG.PANE_TOGGLE) togglePanel();
   });
+
+  /* ------------------------------------------------------------------ *
+   * Storage change propagation
+   * ------------------------------------------------------------------ */
 
   try {
     chrome.storage.onChanged.addListener(function (changes, area) {
@@ -1901,7 +1281,7 @@
         if (changes[PP.SYNC.SETTINGS]) state.settings = changes[PP.SYNC.SETTINGS].newValue || {};
         if (changes[PP.SYNC.ORDER]) state.order = changes[PP.SYNC.ORDER].newValue || [];
         if (changes[PP.SYNC.SHORTCUTS]) state.shortcuts = changes[PP.SYNC.SHORTCUTS].newValue || {};
-        if (changes[PP.SYNC.THEME]) setTheme(changes[PP.SYNC.THEME].newValue || "dark", false);
+        if (changes[PP.SYNC.THEME]) setTheme(changes[PP.SYNC.THEME].newValue || PP.THEME.DARK, false);
         if (changes[PP.SYNC.SETTINGS] || changes[PP.SYNC.ORDER]) renderList();
       }
       if (area === "local" && changes[PP.LOCAL.LAYOUT]) {
@@ -1919,29 +1299,36 @@
         }
       }
     });
-  } catch (e) {}
+  } catch (e) {
+    /* storage.onChanged unavailable; live updates are disabled */
+  }
 
-  // ---- close on outside click / Escape --------------------------------
+  /* ------------------------------------------------------------------ *
+   * Dismissal (outside click / Escape / pointer leave)
+   * ------------------------------------------------------------------ */
+
   document.addEventListener(
     "mousedown",
-    function (e) {
+    function (event) {
       if (panel.classList.contains("hidden")) return;
-      var path = e.composedPath ? e.composedPath() : [];
+      var path = event.composedPath ? event.composedPath() : [];
       if (path.indexOf(host) > -1) return;
       panel.classList.add("hidden");
     },
     true
   );
-  document.addEventListener("keydown", function (e) {
-    if (e.key === "Escape" && !panel.classList.contains("hidden")) panel.classList.add("hidden");
+  document.addEventListener("keydown", function (event) {
+    if (event.key === "Escape" && !panel.classList.contains("hidden")) panel.classList.add("hidden");
   });
-  // Close when the pointer leaves the pane (unless a modal is open).
   panel.addEventListener("mouseleave", function () {
     if (wrap.querySelector(".modal")) return;
     panel.classList.add("hidden");
   });
 
-  // ---- mount -----------------------------------------------------------
+  /* ------------------------------------------------------------------ *
+   * App-shell detection & navigation-button placement
+   * ------------------------------------------------------------------ */
+
   function hasAppShell() {
     try {
       return !!(
@@ -1957,26 +1344,25 @@
   }
 
   function headerBottom() {
-    var hdr =
+    var header =
       document.querySelector('div[data-id="topBar"]') ||
       document.querySelector("#crmMasthead") ||
       document.querySelector("#navBar") ||
       document.querySelector("header");
-    if (!hdr) return 8;
-    return Math.round(hdr.getBoundingClientRect().bottom) + 6;
+    if (!header) return 8;
+    return Math.round(header.getBoundingClientRect().bottom) + 6;
   }
 
-  var pageBtn = null;
   function ensurePageStyle() {
     if (document.getElementById("pp-inline-style")) return;
-    var s = document.createElement("style");
-    s.id = "pp-inline-style";
-    s.textContent =
+    var styleEl = document.createElement("style");
+    styleEl.id = "pp-inline-style";
+    styleEl.textContent =
       ".pp-inline-btn{float:left;display:flex;align-items:center;justify-content:center;width:44px;border:none;background:transparent;cursor:pointer;color:#ffffff;opacity:.92;padding:0;margin:0;box-sizing:border-box}" +
       ".pp-inline-btn.abs{position:absolute;left:0;top:0}" +
       ".pp-inline-btn:hover{background:rgba(255,255,255,.18);opacity:1}" +
       ".pp-inline-btn svg{width:24px;height:24px}";
-    (document.head || document.documentElement).appendChild(s);
+    (document.head || document.documentElement).appendChild(styleEl);
   }
 
   function findNavTarget() {
@@ -1987,18 +1373,20 @@
     return null;
   }
 
-  function realClick(el) {
+  function realClick(element) {
     try {
       var opts = { bubbles: true, cancelable: true, view: window };
-      el.dispatchEvent(new PointerEvent("pointerdown", opts));
-      el.dispatchEvent(new MouseEvent("mousedown", opts));
-      el.dispatchEvent(new PointerEvent("pointerup", opts));
-      el.dispatchEvent(new MouseEvent("mouseup", opts));
-      el.dispatchEvent(new MouseEvent("click", opts));
+      element.dispatchEvent(new PointerEvent("pointerdown", opts));
+      element.dispatchEvent(new MouseEvent("mousedown", opts));
+      element.dispatchEvent(new PointerEvent("pointerup", opts));
+      element.dispatchEvent(new MouseEvent("mouseup", opts));
+      element.dispatchEvent(new MouseEvent("click", opts));
     } catch (e) {
       try {
-        el.click();
-      } catch (e2) {}
+        element.click();
+      } catch (e2) {
+        /* ignore */
+      }
     }
   }
 
@@ -2019,8 +1407,8 @@
       pageBtn.setAttribute("role", "button");
       pageBtn.title = PP.SHORT_NAME + " (Alt+P)";
       pageBtn.innerHTML = bolt;
-      pageBtn.addEventListener("click", function (e) {
-        e.stopPropagation();
+      pageBtn.addEventListener("click", function (event) {
+        event.stopPropagation();
         togglePanel();
       });
     }
@@ -2032,14 +1420,15 @@
       else target.parent.appendChild(pageBtn);
     }
     pageBtn.classList.remove("abs");
-    var h = target.parent.getBoundingClientRect().height;
-    var tg = document.getElementById("navTabGroupDiv");
-    if (tg && target.parent.contains(tg)) h = tg.getBoundingClientRect().height;
+    var height = target.parent.getBoundingClientRect().height;
+    var navTabGroup = document.getElementById("navTabGroupDiv");
+    if (navTabGroup && target.parent.contains(navTabGroup)) height = navTabGroup.getBoundingClientRect().height;
     try {
-      pageBtn.style.height = Math.round(h) + "px";
-    } catch (e) {}
-    pageBtn.style.color =
-      state.impersonation && state.impersonation.user ? "#ffcf4d" : "#ffffff";
+      pageBtn.style.height = Math.round(height) + "px";
+    } catch (e) {
+      /* ignore */
+    }
+    pageBtn.style.color = state.impersonation && state.impersonation.user ? "#ffcf4d" : "#ffffff";
     toggleBtn.style.display = "none";
   }
 
@@ -2057,7 +1446,9 @@
       host.style.display = shell ? "" : "none";
       if (shell) placeButton();
       layoutPanelTop();
-    } catch (e) {}
+    } catch (e) {
+      /* ignore */
+    }
   }
 
   window.addEventListener("resize", function () {
@@ -2069,13 +1460,15 @@
   // the "Advanced Settings - Users" action (flagged in extension storage).
   function autoOpenUsers() {
     var byName = window.name === PP.LOCAL.AUTO_OPEN_USERS;
-    localGet(PP.LOCAL.AUTO_OPEN_USERS, 0).then(function (ts) {
-      var byStore = ts && Date.now() - ts < 120000;
+    localGet(PP.LOCAL.AUTO_OPEN_USERS, 0).then(function (timestamp) {
+      var byStore = timestamp && Date.now() - timestamp < 120000;
       if (!byName && !byStore) return;
       if (byName) {
         try {
           window.name = "";
-        } catch (e) {}
+        } catch (e) {
+          /* ignore */
+        }
       }
       localSet(PP.LOCAL.AUTO_OPEN_USERS, 0);
       var step = 0;
@@ -2088,16 +1481,16 @@
         }
         var labels = [].slice.call(document.querySelectorAll('button,[role="button"],a,span'));
         if (step === 0) {
-          var sw = document.getElementById("TabSettings-main");
+          var settingsTab = document.getElementById("TabSettings-main");
           var area =
-            sw ||
-            labels.filter(function (b) {
+            settingsTab ||
+            labels.filter(function (node) {
               var lab =
-                (b.getAttribute("aria-label") || "") +
+                (node.getAttribute("aria-label") || "") +
                 " " +
-                (b.getAttribute("title") || "") +
+                (node.getAttribute("title") || "") +
                 " " +
-                (b.textContent || "");
+                (node.textContent || "");
               return /settings area/i.test(lab) || /settings.*go to/i.test(lab);
             })[0];
           if (area) {
@@ -2105,24 +1498,26 @@
             step = 1;
           }
         } else if (step === 1) {
-          var sec = labels.filter(function (e) {
-            return (e.textContent || "").trim() === "Security" && e.offsetParent !== null;
+          var security = labels.filter(function (node) {
+            return (node.textContent || "").trim() === "Security" && node.offsetParent !== null;
           })[0];
-          if (sec) {
-            realClick(sec);
+          if (security) {
+            realClick(security);
             step = 2;
           }
         } else if (step === 2) {
           var doc = document;
           try {
-            var fr = document.getElementById("contentIFrame0");
-            if (fr && fr.contentDocument) doc = fr.contentDocument;
-          } catch (e) {}
-          var u = [].slice.call(doc.querySelectorAll("a,span,td,div")).filter(function (e) {
-            return (e.textContent || "").trim() === "Users" && e.offsetParent !== null;
+            var frame = document.getElementById("contentIFrame0");
+            if (frame && frame.contentDocument) doc = frame.contentDocument;
+          } catch (e) {
+            /* cross-origin frame */
+          }
+          var users = [].slice.call(doc.querySelectorAll("a,span,td,div")).filter(function (node) {
+            return (node.textContent || "").trim() === "Users" && node.offsetParent !== null;
           })[0];
-          if (u) {
-            realClick(u);
+          if (users) {
+            realClick(users);
             clearInterval(timer);
           }
         }
@@ -2130,48 +1525,954 @@
     });
   }
 
-  function mount() {
+  /* ------------------------------------------------------------------ *
+   * Feature: impersonation
+   * ------------------------------------------------------------------ */
+
+  /** Resolve after `ms` milliseconds. */
+  function delay(ms) {
+    return new Promise(function (resolve) {
+      setTimeout(resolve, ms);
+    });
+  }
+
+  /** Query the service worker for the active impersonation on this host. */
+  function refreshImpersonation() {
+    return bgSend({ type: PP.MSG.IMP_STATUS, hostname: location.hostname })
+      .then(function (response) {
+        renderImpersonation(response.impersonation);
+        return response.impersonation;
+      })
+      .catch(function () {
+        return null;
+      });
+  }
+
+  function openImpersonate() {
+    refreshImpersonation().then(buildImpersonateModal);
+  }
+
+  /**
+   * Drop the cached identity key so a bypass-cache reload rebuilds it.
+   * NOTE: intentionally does NOT wipe Cache Storage / IndexedDB - doing so
+   * corrupts the D365 client's local store and leaves it stuck on "Loading...".
+   * @returns {Promise<void>}
+   */
+  function clearIdentityCaches() {
+    try {
+      localStorage.removeItem("Microsoft.Crm.BusinessProcessClientCache");
+      for (var i = localStorage.length - 1; i >= 0; i--) {
+        var key = localStorage.key(i);
+        if (/^Form:(userquery|savedquery)$/i.test(key) || /savedquery|viewcache/i.test(key)) {
+          localStorage.removeItem(key);
+        }
+      }
+    } catch (e) {
+      /* localStorage unavailable; nothing to clear */
+    }
+    return Promise.resolve();
+  }
+
+  /** Start impersonation, clear caches, then reload the tab. */
+  async function applyImpersonation(user) {
+    await bgSend({ type: PP.MSG.IMP_START, hostname: location.hostname, user: user });
+    renderImpersonation({ user: user });
+    addRecent(user);
+    await clearIdentityCaches();
+    await delay(RELOAD_DELAY_MS);
+    await bgSend({ type: PP.MSG.RELOAD_TAB });
+    toast("Impersonating " + (user.fullname || "user") + ". Reloading...", "success");
+  }
+
+  function startImpersonate(user) {
+    if (!user.azureactivedirectoryobjectid) {
+      toast("User has no Azure AD object id; cannot impersonate.", "error");
+      return;
+    }
+    applyImpersonation(user).catch(function (err) {
+      toast(err.message, "error");
+    });
+  }
+
+  /** Stop impersonation, clear caches, then reload the tab. */
+  async function stopImpersonate() {
+    try {
+      await bgSend({ type: PP.MSG.IMP_STOP, hostname: location.hostname });
+      renderImpersonation(null);
+      await clearIdentityCaches();
+      await delay(RELOAD_DELAY_MS);
+      await bgSend({ type: PP.MSG.RELOAD_TAB });
+      toast("Impersonation stopped. Reloading...", "success");
+    } catch (err) {
+      toast(err.message, "error");
+    }
+  }
+
+  /** Show the active declarativeNetRequest rules + cached state (debug). */
+  function openDnrRules() {
+    bgSend({ type: PP.MSG.IMP_RULES })
+      .then(function (response) {
+        var rules = (response && response.rules) || [];
+        showOutput({
+          title: "Impersonation Debug",
+          description: rules.length + " session rule(s)",
+          items: [
+            { label: "Rules", value: JSON.stringify(rules, null, 2) },
+            { label: "Hosts", value: JSON.stringify((response && response.hosts) || {}, null, 2) },
+            { label: "Tabs", value: JSON.stringify((response && response.tabs) || {}, null, 2) }
+          ]
+        });
+      })
+      .catch(function (err) {
+        toast(err.message, "error");
+      });
+  }
+
+  /** Shrink a user object to the fields we persist in recent/pinned lists. */
+  function slimUser(user) {
+    return {
+      systemuserid: user.systemuserid,
+      fullname: user.fullname,
+      internalemailaddress: user.internalemailaddress,
+      domainname: user.domainname,
+      azureactivedirectoryobjectid: user.azureactivedirectoryobjectid
+    };
+  }
+
+  function isPinned(user) {
+    var id = user && user.systemuserid;
+    return !!id && state.pinned.some(function (pinned) {
+      return pinned.systemuserid === id;
+    });
+  }
+
+  function togglePin(user) {
+    if (!user || !user.systemuserid) return;
+    if (isPinned(user)) {
+      state.pinned = state.pinned.filter(function (pinned) {
+        return pinned.systemuserid !== user.systemuserid;
+      });
+    } else {
+      state.pinned = state.pinned.concat([slimUser(user)]);
+    }
+    localSet(PP.LOCAL.PINNED_USERS, state.pinned);
+  }
+
+  function addRecent(user) {
+    if (!user || !user.systemuserid) return;
+    state.recent = [slimUser(user)]
+      .concat(
+        state.recent.filter(function (recent) {
+          return recent.systemuserid !== user.systemuserid;
+        })
+      )
+      .slice(0, RECENT_USERS_LIMIT);
+    localSet(PP.LOCAL.RECENT_USERS, state.recent);
+  }
+
+  /** Build a single user row (meta + pin + impersonate). */
+  function userRow(user, onPinChanged) {
+    var row = document.createElement("div");
+    row.className = "user";
+
+    var meta = document.createElement("div");
+    meta.className = "meta";
+    var name = document.createElement("div");
+    name.className = "nm";
+    name.textContent = user.fullname || "(no name)";
+    var email = document.createElement("div");
+    email.className = "em";
+    email.textContent = user.internalemailaddress || user.domainname || "";
+    meta.appendChild(name);
+    meta.appendChild(email);
+
+    var pinButton = document.createElement("button");
+    pinButton.className = "mini";
+    pinButton.title = isPinned(user) ? "Unpin" : "Pin";
+    pinButton.textContent = isPinned(user) ? "\u2605" : "\u2606";
+    pinButton.addEventListener("click", function () {
+      togglePin(user);
+      if (onPinChanged) onPinChanged();
+    });
+
+    var impersonateButton = document.createElement("button");
+    impersonateButton.className = "mini primary";
+    impersonateButton.textContent = "Impersonate";
+    impersonateButton.addEventListener("click", function () {
+      startImpersonate(user);
+    });
+
+    row.appendChild(meta);
+    row.appendChild(pinButton);
+    row.appendChild(impersonateButton);
+    return row;
+  }
+
+  function buildImpersonateModal() {
+    openModal(function (box, close) {
+      var heading = document.createElement("h3");
+      heading.textContent = "Impersonate User";
+      box.appendChild(heading);
+      var description = document.createElement("p");
+      description.className = "desc";
+      description.textContent = "Search by name, email or domain. Requires prvActOnBehalfOfAnotherUser.";
+      box.appendChild(description);
+
+      if (state.impersonation && state.impersonation.user) {
+        var bar = document.createElement("div");
+        bar.className = "impbar";
+        var activeName = document.createElement("span");
+        activeName.className = "nm";
+        activeName.textContent = "Active: " + state.impersonation.user.fullname;
+        var stop = document.createElement("button");
+        stop.className = "mini";
+        stop.textContent = "Stop";
+        stop.addEventListener("click", stopImpersonate);
+        bar.appendChild(activeName);
+        bar.appendChild(stop);
+        box.appendChild(bar);
+      }
+
+      var quick = document.createElement("div");
+      box.appendChild(quick);
+
+      var search = document.createElement("input");
+      search.className = "filter";
+      search.placeholder = "Name, email or domain (min 2 chars)";
+      box.appendChild(search);
+
+      var results = document.createElement("div");
+      box.appendChild(results);
+
+      function renderQuick() {
+        quick.textContent = "";
+        if (state.pinned.length) {
+          var pinnedTitle = document.createElement("div");
+          pinnedTitle.className = "sect";
+          pinnedTitle.textContent = "Pinned";
+          quick.appendChild(pinnedTitle);
+          state.pinned.forEach(function (user) {
+            quick.appendChild(userRow(user, renderQuick));
+          });
+        }
+        var recentOnly = state.recent.filter(function (user) {
+          return !isPinned(user);
+        });
+        if (recentOnly.length) {
+          var recentTitle = document.createElement("div");
+          recentTitle.className = "sect";
+          recentTitle.textContent = "Recent";
+          quick.appendChild(recentTitle);
+          recentOnly.forEach(function (user) {
+            quick.appendChild(userRow(user, renderQuick));
+          });
+        }
+      }
+      renderQuick();
+
+      var timer = null;
+      function doSearch() {
+        var query = search.value.trim();
+        if (query.length < MIN_USER_SEARCH_LENGTH) {
+          results.textContent = "";
+          return;
+        }
+        results.textContent = "";
+        var loading = document.createElement("div");
+        loading.className = "muted";
+        loading.textContent = "Searching...";
+        results.appendChild(loading);
+
+        send("searchUsers", { query: query })
+          .then(function (response) {
+            var users = (response && response.users) || [];
+            results.textContent = "";
+            var title = document.createElement("div");
+            title.className = "sect";
+            title.textContent = "Search Results";
+            results.appendChild(title);
+            if (!users.length) {
+              var none = document.createElement("div");
+              none.className = "empty";
+              none.textContent = "No users found.";
+              results.appendChild(none);
+              return;
+            }
+            users.forEach(function (user) {
+              results.appendChild(userRow(user, function () {}));
+            });
+          })
+          .catch(function (err) {
+            results.textContent = "";
+            var error = document.createElement("div");
+            error.className = "empty";
+            error.textContent = err.message;
+            results.appendChild(error);
+          });
+      }
+      search.addEventListener("input", function () {
+        clearTimeout(timer);
+        timer = setTimeout(doSearch, USER_SEARCH_DEBOUNCE_MS);
+      });
+
+      var foot = document.createElement("div");
+      foot.className = "foot";
+      var closeButton = document.createElement("button");
+      closeButton.textContent = "Close";
+      closeButton.addEventListener("click", close);
+      foot.appendChild(closeButton);
+      box.appendChild(foot);
+    });
+  }
+
+  registerLocal("impersonate", openImpersonate);
+  registerLocal("impersonateStop", stopImpersonate);
+  registerLocal("dnrRules", openDnrRules);
+  onMount(refreshImpersonation);
+
+  /* ------------------------------------------------------------------ *
+   * Feature: user permissions
+   * ------------------------------------------------------------------ */
+
+  /** Multi-term matcher: comma/; /newline separated terms, any-of match. */
+  function matches(text, query) {
+    if (!query) return true;
+    var terms = String(query)
+      .toLowerCase()
+      .split(/[,;\n]+/)
+      .map(function (term) {
+        return term.trim();
+      })
+      .filter(Boolean);
+    if (!terms.length) return true;
+    var lowerText = String(text || "").toLowerCase();
+    return terms.some(function (term) {
+      return lowerText.indexOf(term) > -1;
+    });
+  }
+
+  function openUserAccess() {
+    openModal(
+      function (box, close) {
+        var heading = document.createElement("h3");
+        heading.textContent = "User Permissions";
+        box.appendChild(heading);
+        var description = document.createElement("p");
+        description.className = "desc";
+        description.textContent = "View and modify a user's roles, teams and business unit. Changes apply immediately.";
+        box.appendChild(description);
+
+        var search = document.createElement("input");
+        search.className = "filter";
+        search.placeholder = "Search user by name or email (min 2 chars)";
+        box.appendChild(search);
+        var results = document.createElement("div");
+        box.appendChild(results);
+        var detail = document.createElement("div");
+        box.appendChild(detail);
+
+        var allRoles = [];
+        var allTeams = [];
+        var allBusinessUnits = [];
+
+        var metaReady = Promise.all([
+          send("getAllRoles", {}),
+          send("getAllTeams", {}),
+          send("getBusinessUnits", {})
+        ])
+          .then(function (data) {
+            allRoles = (data[0] && data[0].items) || [];
+            allTeams = (data[1] && data[1].items) || [];
+            allBusinessUnits = (data[2] && data[2].items) || [];
+          })
+          .catch(function () {
+            /* metadata unavailable; the editor degrades gracefully */
+          });
+
+        function loadUser(user) {
+          detail.textContent = "";
+          var loading = document.createElement("div");
+          loading.className = "muted";
+          loading.textContent = "Loading access...";
+          detail.appendChild(loading);
+          Promise.all([send("getUserAccess", { userid: user.systemuserid }), metaReady])
+            .then(function (data) {
+              detail.textContent = "";
+              renderUser(data[0]);
+            })
+            .catch(function (err) {
+              detail.textContent = "";
+              var error = document.createElement("div");
+              error.className = "empty";
+              error.textContent = err.message;
+              detail.appendChild(error);
+            });
+        }
+
+        function renderUser(access) {
+          var roleNameMap = {};
+          allRoles.forEach(function (role) {
+            roleNameMap[role.id.toLowerCase()] = role.name;
+          });
+          access.roles.forEach(function (role) {
+            roleNameMap[role.id.toLowerCase()] = role.name;
+          });
+          var teamNameMap = {};
+          allTeams.forEach(function (team) {
+            teamNameMap[team.id.toLowerCase()] = team.name;
+          });
+          access.teams.forEach(function (team) {
+            teamNameMap[team.id.toLowerCase()] = team.name;
+          });
+
+          var originalRoles = {};
+          access.roles.forEach(function (role) {
+            originalRoles[role.id.toLowerCase()] = true;
+          });
+          var currentRoles = Object.assign({}, originalRoles);
+          var originalTeams = {};
+          access.teams.forEach(function (team) {
+            originalTeams[team.id.toLowerCase()] = true;
+          });
+          var currentTeams = Object.assign({}, originalTeams);
+          var originalBusinessUnit = access.businessUnit ? access.businessUnit.id.toLowerCase() : "";
+          var currentBusinessUnit = originalBusinessUnit;
+
+          // Header: user name + email.
+          var head = document.createElement("div");
+          head.className = "ua-head";
+          var nameEl = document.createElement("b");
+          nameEl.textContent = access.user.name;
+          var emailEl = document.createElement("div");
+          emailEl.className = "muted";
+          emailEl.textContent = access.user.email || "";
+          head.appendChild(nameEl);
+          head.appendChild(emailEl);
+          detail.appendChild(head);
+
+          // Business unit selector.
+          var buRow = document.createElement("div");
+          buRow.className = "ua-row";
+          var buLabel = document.createElement("div");
+          buLabel.className = "ua-k";
+          buLabel.textContent = "Business Unit";
+          var buValue = document.createElement("div");
+          buValue.className = "ua-v";
+          var buSelect = document.createElement("select");
+          allBusinessUnits.forEach(function (businessUnit) {
+            var option = document.createElement("option");
+            option.value = businessUnit.id;
+            option.textContent = businessUnit.name;
+            if (businessUnit.id.toLowerCase() === currentBusinessUnit) option.selected = true;
+            buSelect.appendChild(option);
+          });
+          buSelect.addEventListener("change", function () {
+            currentBusinessUnit = buSelect.value.toLowerCase();
+            updateDirty();
+          });
+          buValue.appendChild(buSelect);
+          buRow.appendChild(buLabel);
+          buRow.appendChild(buValue);
+          detail.appendChild(buRow);
+
+          // Assigned roles chips.
+          var assignedRolesTitle = document.createElement("div");
+          assignedRolesTitle.className = "sect";
+          detail.appendChild(assignedRolesTitle);
+          var assignedRolesChips = document.createElement("div");
+          assignedRolesChips.className = "ua-chips";
+          detail.appendChild(assignedRolesChips);
+          function renderAssignedRoles() {
+            assignedRolesChips.textContent = "";
+            var ids = Object.keys(currentRoles);
+            assignedRolesTitle.textContent = "Assigned Roles (" + ids.length + ")";
+            ids.sort().forEach(function (id) {
+              var chip = document.createElement("span");
+              chip.className = "chip";
+              chip.appendChild(document.createTextNode((roleNameMap[id] || id) + " "));
+              var remove = document.createElement("span");
+              remove.textContent = "\u00d7";
+              remove.style.cssText = "cursor:pointer;opacity:.7";
+              remove.addEventListener("click", function () {
+                delete currentRoles[id];
+                renderAssignedRoles();
+                renderRoles();
+                updateDirty();
+              });
+              chip.appendChild(remove);
+              assignedRolesChips.appendChild(chip);
+            });
+            if (!ids.length) {
+              var none = document.createElement("span");
+              none.className = "muted";
+              none.textContent = "None";
+              assignedRolesChips.appendChild(none);
+            }
+          }
+
+          // All roles (this BU) list with filter.
+          var rolesTitle = document.createElement("div");
+          rolesTitle.className = "sect";
+          rolesTitle.textContent = "All Roles (this BU)";
+          detail.appendChild(rolesTitle);
+          var roleSearch = document.createElement("input");
+          roleSearch.className = "filter";
+          roleSearch.placeholder = "Filter roles (comma = multiple)";
+          detail.appendChild(roleSearch);
+          var rolesList = document.createElement("div");
+          rolesList.className = "ua-list";
+          detail.appendChild(rolesList);
+
+          var roleSourceMap = {};
+          allRoles
+            .filter(function (role) {
+              return !currentBusinessUnit || !role.buId || String(role.buId).toLowerCase() === currentBusinessUnit;
+            })
+            .forEach(function (role) {
+              roleSourceMap[role.id.toLowerCase()] = role;
+            });
+          access.roles.forEach(function (role) {
+            if (!roleSourceMap[role.id.toLowerCase()]) roleSourceMap[role.id.toLowerCase()] = role;
+          });
+          var roleSource = Object.keys(roleSourceMap).map(function (key) {
+            return roleSourceMap[key];
+          });
+
+          function renderRoles() {
+            rolesList.textContent = "";
+            roleSource
+              .filter(function (role) {
+                return matches(role.name, roleSearch.value);
+              })
+              .sort(function (a, b) {
+                return a.name.localeCompare(b.name);
+              })
+              .forEach(function (role) {
+                var label = document.createElement("label");
+                label.className = "ua-item";
+                var checkbox = document.createElement("input");
+                checkbox.type = "checkbox";
+                checkbox.checked = !!currentRoles[role.id.toLowerCase()];
+                checkbox.addEventListener("change", function () {
+                  if (checkbox.checked) currentRoles[role.id.toLowerCase()] = true;
+                  else delete currentRoles[role.id.toLowerCase()];
+                  renderAssignedRoles();
+                  updateDirty();
+                });
+                label.appendChild(checkbox);
+                label.appendChild(document.createTextNode(role.name));
+                rolesList.appendChild(label);
+              });
+          }
+          roleSearch.addEventListener("input", renderRoles);
+
+          // Assigned teams chips.
+          var assignedTeamsTitle = document.createElement("div");
+          assignedTeamsTitle.className = "sect";
+          detail.appendChild(assignedTeamsTitle);
+          var assignedTeamsChips = document.createElement("div");
+          assignedTeamsChips.className = "ua-chips";
+          detail.appendChild(assignedTeamsChips);
+          function renderAssignedTeams() {
+            assignedTeamsChips.textContent = "";
+            var ids = Object.keys(currentTeams);
+            assignedTeamsTitle.textContent = "Teams (" + ids.length + ")";
+            ids.sort().forEach(function (id) {
+              var chip = document.createElement("span");
+              chip.className = "chip";
+              chip.appendChild(document.createTextNode((teamNameMap[id] || id) + " "));
+              var remove = document.createElement("span");
+              remove.textContent = "\u00d7";
+              remove.style.cssText = "cursor:pointer;opacity:.7";
+              remove.addEventListener("click", function () {
+                delete currentTeams[id];
+                renderAssignedTeams();
+                renderTeams();
+                updateDirty();
+              });
+              chip.appendChild(remove);
+              assignedTeamsChips.appendChild(chip);
+            });
+            if (!ids.length) {
+              var none = document.createElement("span");
+              none.className = "muted";
+              none.textContent = "None";
+              assignedTeamsChips.appendChild(none);
+            }
+          }
+
+          // Team picker (search + add).
+          var teamSearch = document.createElement("input");
+          teamSearch.className = "filter";
+          teamSearch.placeholder = "Search teams to add (comma = multiple)";
+          detail.appendChild(teamSearch);
+          var teamsList = document.createElement("div");
+          teamsList.className = "ua-list";
+          detail.appendChild(teamsList);
+          function renderTeams() {
+            teamsList.textContent = "";
+            allTeams
+              .filter(function (team) {
+                return !currentTeams[team.id.toLowerCase()];
+              })
+              .filter(function (team) {
+                return matches(team.name, teamSearch.value);
+              })
+              .sort(function (a, b) {
+                return a.name.localeCompare(b.name);
+              })
+              .slice(0, TEAM_LIST_LIMIT)
+              .forEach(function (team) {
+                var row = document.createElement("div");
+                row.className = "ua-item";
+                var name = document.createElement("span");
+                name.style.flex = "1";
+                name.textContent = team.name;
+                var add = document.createElement("button");
+                add.className = "mini";
+                add.textContent = "Add";
+                add.addEventListener("click", function () {
+                  currentTeams[team.id.toLowerCase()] = true;
+                  teamNameMap[team.id.toLowerCase()] = team.name;
+                  renderAssignedTeams();
+                  renderTeams();
+                  updateDirty();
+                });
+                row.appendChild(name);
+                row.appendChild(add);
+                teamsList.appendChild(row);
+              });
+          }
+          teamSearch.addEventListener("input", renderTeams);
+
+          // Save footer with staged diff.
+          var saveRow = document.createElement("div");
+          saveRow.className = "foot split";
+          detail.appendChild(saveRow);
+          var info = document.createElement("span");
+          info.className = "muted";
+          saveRow.appendChild(info);
+          var saveButton = document.createElement("button");
+          saveButton.className = "primary";
+          saveButton.textContent = "Save";
+          saveRow.appendChild(saveButton);
+
+          function diff() {
+            var operations = [];
+            Object.keys(currentRoles).forEach(function (id) {
+              if (!originalRoles[id]) operations.push({ type: "assignRole", id: id });
+            });
+            Object.keys(originalRoles).forEach(function (id) {
+              if (!currentRoles[id]) operations.push({ type: "removeRole", id: id });
+            });
+            Object.keys(currentTeams).forEach(function (id) {
+              if (!originalTeams[id]) operations.push({ type: "addTeam", id: id });
+            });
+            Object.keys(originalTeams).forEach(function (id) {
+              if (!currentTeams[id]) operations.push({ type: "removeTeam", id: id });
+            });
+            if (currentBusinessUnit && currentBusinessUnit !== originalBusinessUnit) {
+              operations.push({ type: "bu", id: currentBusinessUnit });
+            }
+            return operations;
+          }
+
+          function updateDirty() {
+            var count = diff().length;
+            info.textContent = count ? count + " pending change(s)" : "No changes";
+            saveButton.disabled = !count;
+          }
+
+          saveButton.addEventListener("click", function () {
+            var operations = diff();
+            if (!operations.length) return;
+            saveButton.disabled = true;
+            var calls = operations.map(function (operation) {
+              if (operation.type === "assignRole") {
+                return send("assignRole", { userid: access.user.id, roleid: operation.id });
+              }
+              if (operation.type === "removeRole") {
+                return send("removeRole", { userid: access.user.id, roleid: operation.id });
+              }
+              if (operation.type === "addTeam") {
+                return send("addTeam", { userid: access.user.id, teamid: operation.id });
+              }
+              if (operation.type === "removeTeam") {
+                return send("removeTeam", { userid: access.user.id, teamid: operation.id });
+              }
+              if (operation.type === "bu") {
+                return send("setBusinessUnit", { userid: access.user.id, buid: operation.id });
+              }
+              return Promise.resolve();
+            });
+            Promise.all(calls)
+              .then(function () {
+                toast("Saved " + operations.length + " change(s).", "success");
+                loadUser(access.user);
+              })
+              .catch(function (err) {
+                toast(err.message, "error");
+                saveButton.disabled = false;
+              });
+          });
+
+          renderAssignedRoles();
+          renderRoles();
+          renderAssignedTeams();
+          renderTeams();
+          updateDirty();
+        }
+
+        var timer = null;
+        search.addEventListener("input", function () {
+          clearTimeout(timer);
+          var query = search.value.trim();
+          if (query.length < MIN_USER_SEARCH_LENGTH) {
+            results.textContent = "";
+            return;
+          }
+          timer = setTimeout(function () {
+            send("searchUsers", { query: query })
+              .then(function (response) {
+                results.textContent = "";
+                ((response && response.users) || []).slice(0, USER_SEARCH_RESULT_LIMIT).forEach(function (user) {
+                  var row = document.createElement("div");
+                  row.className = "user";
+                  var meta = document.createElement("div");
+                  meta.className = "meta";
+                  var name = document.createElement("div");
+                  name.className = "nm";
+                  name.textContent = user.fullname || "(no name)";
+                  var email = document.createElement("div");
+                  email.className = "em";
+                  email.textContent = user.internalemailaddress || "";
+                  meta.appendChild(name);
+                  meta.appendChild(email);
+                  var openButton = document.createElement("button");
+                  openButton.className = "mini primary";
+                  openButton.textContent = "Open";
+                  openButton.addEventListener("click", function () {
+                    results.textContent = "";
+                    loadUser(user);
+                  });
+                  row.appendChild(meta);
+                  row.appendChild(openButton);
+                  results.appendChild(row);
+                });
+              })
+              .catch(function () {
+                /* search failed; leave results empty */
+              });
+          }, USER_SEARCH_DEBOUNCE_MS);
+        });
+
+        var foot = document.createElement("div");
+        foot.className = "foot";
+        var closeButton = document.createElement("button");
+        closeButton.textContent = "Close";
+        closeButton.addEventListener("click", close);
+        foot.appendChild(closeButton);
+        box.appendChild(foot);
+      },
+      { wide: true }
+    );
+  }
+
+  registerLocal("userAccess", openUserAccess);
+
+  /* ------------------------------------------------------------------ *
+   * Feature: FetchXML snippets
+   * ------------------------------------------------------------------ */
+
+  function openSnippets() {
+    openModal(function (box, close) {
+      function render() {
+        box.textContent = "";
+        var heading = document.createElement("h3");
+        heading.textContent = "FetchXML Snippets";
+        box.appendChild(heading);
+        var description = document.createElement("p");
+        description.className = "desc";
+        description.textContent = "Save and reuse FetchXML queries.";
+        box.appendChild(description);
+
+        if (!state.snippets.length) {
+          var empty = document.createElement("div");
+          empty.className = "empty";
+          empty.textContent = "No snippets yet.";
+          box.appendChild(empty);
+        }
+
+        state.snippets.forEach(function (snippet, index) {
+          var row = document.createElement("div");
+          row.className = "srow";
+          var name = document.createElement("span");
+          name.className = "nm";
+          name.textContent = snippet.name;
+          row.appendChild(name);
+
+          var runButton = document.createElement("button");
+          runButton.className = "mini";
+          runButton.textContent = "Run";
+          runButton.addEventListener("click", function () {
+            close();
+            send("executeFetchXml", { xml: snippet.xml })
+              .then(function (result) {
+                if (result && result.output) showOutput(result.output);
+                if (result && result.message) toast(result.message, result.level);
+              })
+              .catch(function (err) {
+                toast(err.message, "error");
+              });
+          });
+          var editButton = document.createElement("button");
+          editButton.className = "mini";
+          editButton.textContent = "Edit";
+          editButton.addEventListener("click", function () {
+            form(snippet, index);
+          });
+          var deleteButton = document.createElement("button");
+          deleteButton.className = "mini";
+          deleteButton.textContent = "Del";
+          deleteButton.addEventListener("click", function () {
+            state.snippets.splice(index, 1);
+            syncSet({ [PP.SYNC.SNIPPETS]: state.snippets }).then(render);
+          });
+
+          row.appendChild(runButton);
+          row.appendChild(editButton);
+          row.appendChild(deleteButton);
+          box.appendChild(row);
+        });
+
+        var foot = document.createElement("div");
+        foot.className = "foot";
+        var addButton = document.createElement("button");
+        addButton.className = "primary";
+        addButton.textContent = "New";
+        addButton.addEventListener("click", function () {
+          form(null, -1);
+        });
+        var closeButton = document.createElement("button");
+        closeButton.textContent = "Close";
+        closeButton.addEventListener("click", close);
+        foot.appendChild(addButton);
+        foot.appendChild(closeButton);
+        box.appendChild(foot);
+      }
+
+      function form(snippet, index) {
+        box.textContent = "";
+        var heading = document.createElement("h3");
+        heading.textContent = index >= 0 ? "Edit Snippet" : "New Snippet";
+        box.appendChild(heading);
+
+        var nameField = document.createElement("div");
+        nameField.className = "field";
+        var nameLabel = document.createElement("label");
+        nameLabel.textContent = "Name";
+        var nameInput = document.createElement("input");
+        nameInput.type = "text";
+        nameInput.value = snippet ? snippet.name : "";
+        nameField.appendChild(nameLabel);
+        nameField.appendChild(nameInput);
+        box.appendChild(nameField);
+
+        var xmlField = document.createElement("div");
+        xmlField.className = "field";
+        var xmlLabel = document.createElement("label");
+        xmlLabel.textContent = "FetchXML";
+        var xmlArea = document.createElement("textarea");
+        xmlArea.value = snippet ? snippet.xml : "";
+        xmlField.appendChild(xmlLabel);
+        xmlField.appendChild(xmlArea);
+        box.appendChild(xmlField);
+
+        var foot = document.createElement("div");
+        foot.className = "foot";
+        var backButton = document.createElement("button");
+        backButton.textContent = "Back";
+        backButton.addEventListener("click", render);
+        var saveButton = document.createElement("button");
+        saveButton.className = "primary";
+        saveButton.textContent = "Save";
+        saveButton.addEventListener("click", function () {
+          var name = nameInput.value.trim() || "Untitled";
+          if (index >= 0) state.snippets[index] = { name: name, xml: xmlArea.value };
+          else state.snippets.push({ name: name, xml: xmlArea.value });
+          syncSet({ [PP.SYNC.SNIPPETS]: state.snippets }).then(render);
+        });
+        foot.appendChild(backButton);
+        foot.appendChild(saveButton);
+        box.appendChild(foot);
+        nameInput.focus();
+      }
+
+      render();
+    });
+  }
+
+  registerLocal("snippets", openSnippets);
+
+  /* ------------------------------------------------------------------ *
+   * Mount
+   * ------------------------------------------------------------------ */
+
+  async function mount() {
     (document.body || document.documentElement).appendChild(host);
     updateVisibility();
     autoOpenUsers();
-    var visTimer = null;
+
+    var visibilityTimer = null;
     try {
       new MutationObserver(function () {
-        clearTimeout(visTimer);
-        visTimer = setTimeout(updateVisibility, 80);
+        clearTimeout(visibilityTimer);
+        visibilityTimer = setTimeout(updateVisibility, 80);
       }).observe(document.documentElement, { childList: true, subtree: true });
-    } catch (e) {}
+    } catch (e) {
+      /* observer unavailable */
+    }
+
     var fastTries = 0;
-    var fast = setInterval(function () {
+    var fastTimer = setInterval(function () {
       updateVisibility();
       fastTries++;
-      if (fastTries > 40) clearInterval(fast);
+      if (fastTries > 40) clearInterval(fastTimer);
     }, 150);
-    applyLayout();
+
     renderList();
+
     var syncDefaults = {};
     syncDefaults[PP.SYNC.SETTINGS] = {};
-    syncDefaults[PP.SYNC.THEME] = "dark";
+    syncDefaults[PP.SYNC.THEME] = PP.THEME.DARK;
     syncDefaults[PP.SYNC.SHORTCUTS] = {};
     syncDefaults[PP.SYNC.SNIPPETS] = [];
     syncDefaults[PP.SYNC.ORDER] = [];
-    syncGet(syncDefaults).then(function (data) {
-      state.settings = data[PP.SYNC.SETTINGS] || {};
-      state.snippets = data[PP.SYNC.SNIPPETS] || [];
-      state.shortcuts = data[PP.SYNC.SHORTCUTS] || {};
-      state.order = data[PP.SYNC.ORDER] || [];
-      setTheme(data[PP.SYNC.THEME] || "dark", false);
-      renderList();
+    var syncData = await syncGet(syncDefaults);
+    state.settings = syncData[PP.SYNC.SETTINGS] || {};
+    state.snippets = syncData[PP.SYNC.SNIPPETS] || [];
+    state.shortcuts = syncData[PP.SYNC.SHORTCUTS] || {};
+    state.order = syncData[PP.SYNC.ORDER] || [];
+    setTheme(syncData[PP.SYNC.THEME] || PP.THEME.DARK, false);
+    renderList();
+
+    state.layout = await localGet(PP.LOCAL.LAYOUT, null);
+    applyLayout();
+
+    var users = await Promise.all([
+      localGet(PP.LOCAL.RECENT_USERS, []),
+      localGet(PP.LOCAL.PINNED_USERS, [])
+    ]);
+    state.recent = users[0] || [];
+    state.pinned = users[1] || [];
+
+    onMountHooks.forEach(function (hook) {
+      try {
+        hook();
+      } catch (e) {
+        /* a feature hook must never break the pane */
+      }
     });
-    localGet(PP.LOCAL.LAYOUT, null).then(function (layout) {
-      state.layout = layout;
-      applyLayout();
-    });
-    Promise.all([localGet(PP.LOCAL.RECENT_USERS, []), localGet(PP.LOCAL.PINNED_USERS, [])]).then(function (vals) {
-      state.recent = vals[0] || [];
-      state.pinned = vals[1] || [];
-    });
-    refreshImpersonation();
   }
 
   if (document.readyState === "loading") {

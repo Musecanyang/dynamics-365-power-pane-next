@@ -10,39 +10,13 @@
 (function () {
   "use strict";
 
-  var PP =
-    window.PP ||
-    {
-      NAME: "Dynamics 365 Power Pane Next",
-      SHORT_NAME: "Power Pane Next",
-      SYNC: {
-        SETTINGS: "ppSettings",
-        THEME: "ppTheme",
-        SHORTCUTS: "ppShortcuts",
-        SNIPPETS: "ppSnippets",
-        ORDER: "ppOrder"
-      },
-      LOCAL: {
-        RECENT_USERS: "ppRecentUsers",
-        PINNED_USERS: "ppPinnedUsers",
-        LAYOUT: "ppLayout3",
-        AUTO_OPEN_USERS: "ppAutoUsers"
-      },
-      MSG: {
-        IMP_START: "pp:imp-start",
-        IMP_STOP: "pp:imp-stop",
-        IMP_STATUS: "pp:imp-status",
-        IMP_RULES: "pp:imp-rules",
-        RELOAD_TAB: "pp:reload",
-        OPEN_OPTIONS: "pp-open-options",
-        PANE_TOGGLE: "pp-toggle"
-      },
-      BRIDGE: { REQUEST: "req", RESPONSE: "res" }
-    };
+  var PP = window.PP;
   var ACTIONS = window.POWER_PANE_ACTIONS || [];
-  var byId = {};
+
+  /** Lookup table action id -> action definition. */
+  var actionsById = {};
   ACTIONS.forEach(function (action) {
-    byId[action.id] = action;
+    actionsById[action.id] = action;
   });
 
   /** Group order follows the declaration order in actions.js. */
@@ -66,19 +40,57 @@
   var order = ACTIONS.map(function (action) {
     return action.id;
   });
-  var enabled = {};
-  var shortcuts = {};
+  var visibility = {}; // action id -> visible (boolean)
+  var shortcuts = {}; // action id -> "Ctrl+Alt+K" style combo
   var dragId = null;
   var recording = null;
 
+  /** @type {number|undefined} handle for the transient status timeout. */
+  var statusTimer;
+
+  /** Show a transient status message that fades after 1.5s. */
   function setStatus(message) {
     statusEl.textContent = message;
-    setTimeout(function () {
+    clearTimeout(statusTimer);
+    statusTimer = setTimeout(function () {
       statusEl.textContent = "";
     }, 1500);
   }
 
-  /** Convert a keydown event into a "Ctrl+Alt+K" style combo, or null. */
+  /** Wrap chrome.storage.sync.get in a Promise. */
+  function syncGet(defaults) {
+    return new Promise(function (resolve) {
+      chrome.storage.sync.get(defaults, resolve);
+    });
+  }
+
+  /** Wrap chrome.storage.sync.set in a Promise. */
+  function syncSet(payload) {
+    return new Promise(function (resolve) {
+      chrome.storage.sync.set(payload, resolve);
+    });
+  }
+
+  /** Wrap chrome.storage.local.remove in a Promise. */
+  function localRemove(key) {
+    return new Promise(function (resolve) {
+      chrome.storage.local.remove(key, resolve);
+    });
+  }
+
+  /** Wrap chrome.storage.sync.remove in a Promise. */
+  function syncRemove(keys) {
+    return new Promise(function (resolve) {
+      chrome.storage.sync.remove(keys, resolve);
+    });
+  }
+
+  /**
+   * Convert a keydown event into a "Ctrl+Alt+K" style combo, or null when the
+   * event is a bare modifier (no modifier + no real key is not a valid combo).
+   * @param {KeyboardEvent} event
+   * @returns {string|null}
+   */
   function comboFromEvent(event) {
     var parts = [];
     if (event.ctrlKey) parts.push("Ctrl");
@@ -93,6 +105,7 @@
     return parts.join("+") + "+" + key;
   }
 
+  /** Begin recording a shortcut for an action. */
   function startRecording(actionId, button) {
     if (recording) recording.button.classList.remove("recording");
     recording = { id: actionId, button: button };
@@ -119,7 +132,7 @@
     var combo = comboFromEvent(event);
     if (!combo) return;
     var id = recording.id;
-    // A combo can only be bound to one action.
+    // A combo can only be bound to one action: clear any previous binding.
     Object.keys(shortcuts).forEach(function (other) {
       if (other !== id && shortcuts[other] === combo) delete shortcuts[other];
     });
@@ -129,9 +142,10 @@
     recording = null;
   });
 
+  /** Action ids that belong to a group, in the current order. */
   function idsOfGroup(group) {
     return order.filter(function (id) {
-      return byId[id] && byId[id].group === group;
+      return actionsById[id] && actionsById[id].group === group;
     });
   }
 
@@ -146,10 +160,10 @@
 
       var ids = idsOfGroup(group);
       var enabledIds = ids.filter(function (id) {
-        return enabled[id] !== false;
+        return visibility[id] !== false;
       });
       var disabledIds = ids.filter(function (id) {
-        return enabled[id] === false;
+        return visibility[id] === false;
       });
       enabledIds.concat(disabledIds).forEach(function (id) {
         fieldset.appendChild(buildRow(id, group));
@@ -160,8 +174,8 @@
 
   /** Build one editable row for an action. */
   function buildRow(actionId, group) {
-    var action = byId[actionId];
-    var isEnabled = enabled[actionId] !== false;
+    var action = actionsById[actionId];
+    var isEnabled = visibility[actionId] !== false;
 
     var row = document.createElement("div");
     row.className = "row" + (isEnabled ? "" : " disabled");
@@ -176,7 +190,7 @@
     checkbox.type = "checkbox";
     checkbox.checked = isEnabled;
     checkbox.addEventListener("change", function () {
-      enabled[actionId] = checkbox.checked;
+      visibility[actionId] = checkbox.checked;
       render();
     });
 
@@ -185,7 +199,7 @@
     label.textContent = action.label;
     label.addEventListener("click", function () {
       checkbox.checked = !checkbox.checked;
-      enabled[actionId] = checkbox.checked;
+      visibility[actionId] = checkbox.checked;
       render();
     });
 
@@ -213,12 +227,12 @@
       dragId = null;
     });
     row.addEventListener("dragover", function (event) {
-      if (dragId && byId[dragId] && byId[dragId].group === group) event.preventDefault();
+      if (dragId && actionsById[dragId] && actionsById[dragId].group === group) event.preventDefault();
     });
     row.addEventListener("drop", function (event) {
       event.preventDefault();
       if (!dragId || dragId === actionId) return;
-      if (!byId[dragId] || byId[dragId].group !== group) return;
+      if (!actionsById[dragId] || actionsById[dragId].group !== group) return;
       var from = order.indexOf(dragId);
       var to = order.indexOf(actionId);
       if (from < 0 || to < 0) return;
@@ -230,87 +244,81 @@
     return row;
   }
 
-  /** Load persisted preferences. */
-  function load() {
+  /** Load persisted preferences into working state. */
+  async function load() {
     var defaults = {};
     defaults[PP.SYNC.SETTINGS] = {};
-    defaults[PP.SYNC.THEME] = "dark";
+    defaults[PP.SYNC.THEME] = PP.THEME.DARK;
     defaults[PP.SYNC.SHORTCUTS] = {};
     defaults[PP.SYNC.ORDER] = [];
-    chrome.storage.sync.get(defaults, function (data) {
-      enabled = data[PP.SYNC.SETTINGS] || {};
-      shortcuts = data[PP.SYNC.SHORTCUTS] || {};
-      themeSelect.value = data[PP.SYNC.THEME] || "dark";
+    var data = await syncGet(defaults);
 
-      // Restore order (saved ids first, then any new actions appended).
-      var saved = data[PP.SYNC.ORDER] || [];
-      var seen = {};
-      order = [];
-      saved.forEach(function (id) {
-        if (byId[id] && !seen[id]) {
-          order.push(id);
-          seen[id] = true;
-        }
-      });
-      ACTIONS.forEach(function (action) {
-        if (!seen[action.id]) order.push(action.id);
-      });
-      render();
+    visibility = data[PP.SYNC.SETTINGS] || {};
+    shortcuts = data[PP.SYNC.SHORTCUTS] || {};
+    themeSelect.value = data[PP.SYNC.THEME] || PP.THEME.DARK;
+
+    // Restore order (saved ids first, then any new actions appended).
+    var saved = data[PP.SYNC.ORDER] || [];
+    var seen = {};
+    order = [];
+    saved.forEach(function (id) {
+      if (actionsById[id] && !seen[id]) {
+        order.push(id);
+        seen[id] = true;
+      }
     });
+    ACTIONS.forEach(function (action) {
+      if (!seen[action.id]) order.push(action.id);
+    });
+    render();
   }
 
-  /** Persist the working state. */
-  function save() {
+  /** Persist the working state to chrome.storage.sync. */
+  async function save() {
     var settings = {};
     order.forEach(function (id) {
-      settings[id] = enabled[id] !== false;
+      settings[id] = visibility[id] !== false;
     });
     var payload = {};
     payload[PP.SYNC.SETTINGS] = settings;
     payload[PP.SYNC.THEME] = themeSelect.value;
     payload[PP.SYNC.SHORTCUTS] = shortcuts;
     payload[PP.SYNC.ORDER] = order;
-    chrome.storage.sync.set(payload, function () {
-      setStatus("Saved.");
-    });
+    await syncSet(payload);
+    setStatus("Saved.");
   }
 
   document.getElementById("all").addEventListener("click", function () {
     order.forEach(function (id) {
-      enabled[id] = true;
+      visibility[id] = true;
     });
     render();
   });
   document.getElementById("none").addEventListener("click", function () {
     order.forEach(function (id) {
-      enabled[id] = false;
+      visibility[id] = false;
     });
     render();
   });
-  document.getElementById("resetPos").addEventListener("click", function () {
-    chrome.storage.local.remove(PP.LOCAL.LAYOUT, function () {
-      setStatus("Pane position reset (reopen the pane).");
-    });
+  document.getElementById("resetPos").addEventListener("click", async function () {
+    await localRemove(PP.LOCAL.LAYOUT);
+    setStatus("Pane position reset (reopen the pane).");
   });
-  document.getElementById("restore").addEventListener("click", function () {
-    if (!confirm("Restore all default settings? This clears visibility, order, theme, shortcuts and snippets.")) {
-      return;
-    }
-    chrome.storage.sync.remove(
-      [PP.SYNC.SETTINGS, PP.SYNC.THEME, PP.SYNC.SHORTCUTS, PP.SYNC.ORDER, PP.SYNC.SNIPPETS],
-      function () {
-        chrome.storage.local.remove(PP.LOCAL.LAYOUT, function () {
-          enabled = {};
-          shortcuts = {};
-          themeSelect.value = "dark";
-          order = ACTIONS.map(function (action) {
-            return action.id;
-          });
-          render();
-          setStatus("Defaults restored.");
-        });
-      }
+  document.getElementById("restore").addEventListener("click", async function () {
+    var confirmed = window.confirm(
+      "Restore all default settings? This clears visibility, order, theme, shortcuts and snippets."
     );
+    if (!confirmed) return;
+    await syncRemove([PP.SYNC.SETTINGS, PP.SYNC.THEME, PP.SYNC.SHORTCUTS, PP.SYNC.ORDER, PP.SYNC.SNIPPETS]);
+    await localRemove(PP.LOCAL.LAYOUT);
+    visibility = {};
+    shortcuts = {};
+    themeSelect.value = PP.THEME.DARK;
+    order = ACTIONS.map(function (action) {
+      return action.id;
+    });
+    render();
+    setStatus("Defaults restored.");
   });
   document.getElementById("save").addEventListener("click", save);
 

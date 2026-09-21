@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- `All Fields`: the **Entity** column now sits directly after **Type**, and the
+  Logical Name / Value columns are width-capped so a long value no longer
+  stretches the dialog.
+- `All Fields`: the attributes, record and lookup-target requests are issued in
+  parallel instead of one after the other.
+- The pane and every dialog now use a slim, theme-aware scrollbar instead of the
+  browser's default one (thin thumb, transparent track, darkens on hover).
+
+### Fixed
+- `All Fields`: empty lookups now always show their target entity (the
+  `lookuplogicalname` annotation is only returned for lookups that point at a
+  record, so the metadata query is still needed as a source).
+
 ## [1.0.2] - 2026-09-20
 
 ### Fixed

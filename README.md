@@ -81,7 +81,7 @@ Actions are grouped in the pane exactly as listed here.
 | `Toggle Lookup Links` | Adds an "open in new window" link next to lookups. |
 | `Refresh Ribbon` / `Refresh Form` / `Refresh Subgrids` | Refresh commands, the form, or all subgrids. |
 | `Refresh Without Save` | Refreshes and disables auto-save for the session. |
-| `All Fields (Web API)` | Full record dump: display name, logical name, type, value and formatted value. |
+| `All Fields` | One row per field: display name, logical name, type, target entity (for lookups), raw value and formatted value. Platform companion columns (`*name` / `*yominame`) are hidden, and the raw Web API JSON can be copied in one click. |
 | `Table Processes` | Workflows, business rules, BPFs, actions and custom APIs for the entity; row detail + open. |
 
 ### Navigation
@@ -239,17 +239,18 @@ cookies or tokens.
 ## Project structure
 
 ```
-manifest.json            MV3 manifest (content scripts, background, options)
-background.js            service worker: toolbar toggle + impersonation (DNR)
+manifest.json                 MV3 manifest (content scripts, background, options)
+background.js                 service worker: toolbar toggle + impersonation (DNR)
 src/
-  constants.js           shared constants (name, storage keys, message types)
-  actions.js             action registry (the single source of truth)
+  constants.js                shared constants (name, storage keys, message types)
+  actions.js                  action registry (the single source of truth)
 content/
-  content.js             isolated-world UI (Shadow DOM pane, prefs, modals)
-  main-world.js          MAIN-world bridge (Xrm + Web API command handlers)
+  content.js                  isolated-world UI (Shadow DOM pane, prefs, modals,
+                              impersonation/user-access/snippets editors)
+  main-world.js               MAIN-world bridge (Xrm + Web API command handlers)
 options/
-  options.html, options.js   visibility / order / shortcuts / theme
-icons/                   toolbar icons
+  options.html, options.js    visibility / order / shortcuts / theme
+icons/                        toolbar icons
 ```
 
 ### Adding an action

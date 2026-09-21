@@ -17,31 +17,70 @@
  * The active impersonation is recorded per hostname in `chrome.storage.session`
  * so it survives service-worker restarts and can be re-applied to new tabs.
  *
- * All constants are defined in src/constants.js (imported below).
+ * Rule-id namespacing
+ * -------------------
+ * DeclarativeNetRequest session-rule ids and Chrome tab ids share a single
+ * integer namespace. To support impersonating *multiple* environments at once
+ * (and to never collide with a real tab id), every rule id is derived
+ * deterministically rather than reused from a fixed pool:
+ *   - TAB rules  -> TAB_RULE_ID_OFFSET + tabId
+ *   - HOST/SW    -> a per-host band computed from a hash of the hostname
+ * This fixes the previous design where two hosts would overwrite each other's
+ * single shared HOST/SW rule.
+ *
+ * All cross-file constants come from src/constants.js (imported below).
  */
 
 importScripts("./src/constants.js");
 
-var PP = self.PP || {
-  SESSION: { HOSTS: "ppImpHosts", TABS: "ppImpTabs" },
-  MSG: {
-    IMP_START: "pp:imp-start",
-    IMP_STOP: "pp:imp-stop",
-    IMP_STATUS: "pp:imp-status",
-    IMP_RULES: "pp:imp-rules",
-    RELOAD_TAB: "pp:reload",
-    OPEN_OPTIONS: "pp-open-options",
-    PANE_TOGGLE: "pp-toggle"
+var PP = self.PP;
+
+/* --- Rule-id namespacing ------------------------------------------------ */
+
+/** Tab rules live in a high band so they can never clash with a tab id. */
+var TAB_RULE_ID_OFFSET = 1000000;
+/** Host/SW rules start in a band above the tab band. */
+var HOST_RULE_ID_BAND_BASE = 1001000;
+/** Size of the host/SW band (two ids are consumed per host). */
+var HOST_RULE_ID_BAND_SIZE = 100000;
+
+/**
+ * Deterministic rule-id band base for a hostname. Two ids are reserved per
+ * host: `base` (HOST rule) and `base + 1` (SW rule). Collisions between two
+ * different hostnames are astronomically unlikely for a real-world set of
+ * environments.
+ * @param {string} hostname
+ * @returns {number}
+ */
+function hostRuleBase(hostname) {
+  var hash = 0;
+  for (var i = 0; i < hostname.length; i++) {
+    hash = (hash * 31 + hostname.charCodeAt(i)) >>> 0;
   }
-};
+  return HOST_RULE_ID_BAND_BASE + (hash % HOST_RULE_ID_BAND_SIZE);
+}
 
-/* --- Rule identifiers ------------------------------------------------- */
-/** Rule id for requests that do not originate from a tab (e.g. the SW). */
-var SW_RULE_ID = 1;
-/** Rule id for the host-wide rule (all tabs/windows on the environment). */
-var HOST_RULE_ID = 2;
+/**
+ * Rule id for the per-tab rule of a tab.
+ * @param {number} tabId
+ * @returns {number}
+ */
+function tabRuleId(tabId) {
+  return TAB_RULE_ID_OFFSET + tabId;
+}
 
-/* --- Session state helpers -------------------------------------------- */
+/* --- Logging ------------------------------------------------------------ */
+
+/** Best-effort debug logging; never throws, even if console is unavailable. */
+function logDebug() {
+  try {
+    console.debug.apply(console, ["[Power Pane]"].concat(Array.prototype.slice.call(arguments)));
+  } catch (e) {
+    /* ignore */
+  }
+}
+
+/* --- Session state helpers ---------------------------------------------- */
 
 /**
  * Read a value from chrome.storage.session with a fallback.
@@ -64,17 +103,79 @@ async function sessionSet(key, value) {
   await chrome.storage.session.set({ [key]: value });
 }
 
-/** @returns {Promise<Object<string, {user: Object, startedAt: number}>>} */
+/**
+ * @returns {Promise<Object<string, {user: Object, startedAt: number, ruleIds: number[]}>>}
+ */
 function getHosts() {
   return sessionGet(PP.SESSION.HOSTS, {});
 }
 
-/** @returns {Promise<Object<number, {hostname: string}>>} */
+/**
+ * @returns {Promise<Object<number, {hostname: string, ruleId: number}>>}
+ */
 function getTabs() {
   return sessionGet(PP.SESSION.TABS, {});
 }
 
-/* --- DeclarativeNetRequest rule management ---------------------------- */
+/* --- DeclarativeNetRequest rule management ------------------------------ */
+
+/**
+ * Build the request-headers action and shared URL condition for a host.
+ * @param {string} hostname
+ * @param {{azureactivedirectoryobjectid: string, systemuserid?: string}} impUser
+ * @returns {{action: Object, baseCondition: Object}}
+ */
+function buildRuleAction(hostname, impUser) {
+  const requestHeaders = [
+    { header: "CallerObjectId", operation: "set", value: impUser.azureactivedirectoryobjectid }
+  ];
+  if (impUser.systemuserid) {
+    requestHeaders.push({ header: "MSCRMCallerID", operation: "set", value: impUser.systemuserid });
+  }
+  return {
+    action: { type: "modifyHeaders", requestHeaders: requestHeaders },
+    baseCondition: { urlFilter: `||${hostname}/` }
+  };
+}
+
+/**
+ * Assemble the three rules (host, service-worker and optionally tab) for one
+ * environment, keyed by the namespaced ids described above.
+ * @param {string} hostname
+ * @param {{azureactivedirectoryobjectid: string, systemuserid?: string}} impUser
+ * @param {number|null} tabId
+ * @returns {Object[]} the rules to add
+ */
+function buildRulesForHost(hostname, impUser, tabId) {
+  const { action, baseCondition } = buildRuleAction(hostname, impUser);
+  const base = hostRuleBase(hostname);
+
+  const hostWideRule = {
+    id: base,
+    priority: 1,
+    action: action,
+    condition: Object.assign({}, baseCondition, { requestDomains: [hostname] })
+  };
+  const serviceWorkerRule = {
+    id: base + 1,
+    priority: 1,
+    action: action,
+    condition: Object.assign({}, baseCondition, { tabIds: [-1] })
+  };
+  const tabRule =
+    tabId != null
+      ? {
+          id: tabRuleId(tabId),
+          priority: 1,
+          action: action,
+          condition: Object.assign({}, baseCondition, { tabIds: [tabId] })
+        }
+      : null;
+
+  const rules = [hostWideRule, serviceWorkerRule];
+  if (tabRule) rules.push(tabRule);
+  return rules;
+}
 
 /**
  * Add/replace the impersonation rules for one tab on one host.
@@ -86,76 +187,49 @@ function getTabs() {
  * @param {{azureactivedirectoryobjectid: string, systemuserid?: string}} impUser
  * @returns {Promise<void>}
  */
-async function addRule(tabId, hostname, impUser) {
-  const requestHeaders = [
-    { header: "CallerObjectId", operation: "set", value: impUser.azureactivedirectoryobjectid }
-  ];
-  if (impUser.systemuserid) {
-    requestHeaders.push({ header: "MSCRMCallerID", operation: "set", value: impUser.systemuserid });
-  }
-  const action = { type: "modifyHeaders", requestHeaders: requestHeaders };
-  const baseCondition = { urlFilter: `||${hostname}/` };
-
-  const hostWideRule = {
-    id: HOST_RULE_ID,
-    priority: 1,
-    action: action,
-    condition: Object.assign({}, baseCondition, { requestDomains: [hostname] })
-  };
-  const serviceWorkerRule = {
-    id: SW_RULE_ID,
-    priority: 1,
-    action: action,
-    condition: Object.assign({}, baseCondition, { tabIds: [-1] })
-  };
-  const tabRule =
-    tabId != null
-      ? { id: tabId, priority: 1, action: action, condition: Object.assign({}, baseCondition, { tabIds: [tabId] }) }
-      : null;
-
-  const removeRuleIds = [SW_RULE_ID, HOST_RULE_ID];
-  const addRules = [hostWideRule, serviceWorkerRule];
-  if (tabRule) {
-    removeRuleIds.push(tabId);
-    addRules.push(tabRule);
-  }
+async function addRulesForHost(tabId, hostname, impUser) {
+  const allRules = buildRulesForHost(hostname, impUser, tabId);
+  const hostAndSwRules = allRules.slice(0, 2);
+  const tabOnlyRules = allRules.slice(2);
 
   try {
-    await chrome.declarativeNetRequest.updateSessionRules({ removeRuleIds, addRules });
+    await chrome.declarativeNetRequest.updateSessionRules({ removeRuleIds: [], addRules: allRules });
   } catch (e) {
-    // Fallback: drop the host-wide rule (retry without it).
-    const fallbackRemove = [SW_RULE_ID];
-    const fallbackAdd = [serviceWorkerRule];
-    if (tabRule) {
-      fallbackRemove.push(tabId);
-      fallbackAdd.push(tabRule);
-    }
+    // Fallback: drop the host-wide rule and retry without it. updateSessionRules
+    // replaces rules by id, so re-adding the tab/SW rules is idempotent.
+    logDebug("Host-wide rule rejected, retrying without it.", e);
     await chrome.declarativeNetRequest.updateSessionRules({
-      removeRuleIds: fallbackRemove,
-      addRules: fallbackAdd
+      removeRuleIds: [],
+      addRules: hostAndSwRules.slice(1).concat(tabOnlyRules)
     });
   }
 }
 
 /**
- * Remove every rule associated with an environment host.
+ * Remove every rule associated with an environment host (host-wide, SW and all
+ * of its tab rules) without touching any other host's rules.
  * @param {string} hostname
  * @returns {Promise<void>}
  */
 async function removeRulesForHost(hostname) {
   const tabs = await getTabs();
-  const ruleIds = [SW_RULE_ID, HOST_RULE_ID];
+  const base = hostRuleBase(hostname);
+  const ruleIds = [base, base + 1];
+
   Object.keys(tabs).forEach((tabId) => {
     if (tabs[tabId] && tabs[tabId].hostname === hostname) {
-      ruleIds.push(Number(tabId));
+      ruleIds.push(tabs[tabId].ruleId);
       delete tabs[tabId];
     }
   });
-  await chrome.declarativeNetRequest.updateSessionRules({ removeRuleIds: ruleIds }).catch(() => {});
+
+  await chrome.declarativeNetRequest.updateSessionRules({ removeRuleIds: ruleIds }).catch((e) => {
+    logDebug("Failed to remove rules for host " + hostname, e);
+  });
   await sessionSet(PP.SESSION.TABS, tabs);
 }
 
-/* --- Impersonation lifecycle ------------------------------------------ */
+/* --- Impersonation lifecycle -------------------------------------------- */
 
 /**
  * Start impersonating `user` on `hostname`, applying rules to the originating
@@ -170,13 +244,16 @@ async function startImpersonation(hostname, user, tabId) {
   if (!user || !user.azureactivedirectoryobjectid) {
     throw new Error("Selected user has no Azure AD object id; cannot impersonate.");
   }
+
   await removeRulesForHost(hostname);
+
   if (tabId != null) {
-    await addRule(tabId, hostname, user);
+    await addRulesForHost(tabId, hostname, user);
     const tabs = await getTabs();
-    tabs[tabId] = { hostname };
+    tabs[tabId] = { hostname: hostname, ruleId: tabRuleId(tabId) };
     await sessionSet(PP.SESSION.TABS, tabs);
   }
+
   const hosts = await getHosts();
   hosts[hostname] = {
     user: {
@@ -185,13 +262,14 @@ async function startImpersonation(hostname, user, tabId) {
       internalemailaddress: user.internalemailaddress || "",
       azureactivedirectoryobjectid: user.azureactivedirectoryobjectid
     },
-    startedAt: Date.now()
+    startedAt: Date.now(),
+    ruleIds: [hostRuleBase(hostname), hostRuleBase(hostname) + 1]
   };
   await sessionSet(PP.SESSION.HOSTS, hosts);
 }
 
 /**
- * Stop impersonating on a host and remove all its rules.
+ * Stop impersonating on a host and remove all of its rules.
  * @param {string} hostname
  * @returns {Promise<void>}
  */
@@ -211,7 +289,7 @@ async function getStatus(hostname) {
   return hosts[hostname] || null;
 }
 
-/* --- New-tab propagation ---------------------------------------------- */
+/* --- New-tab propagation ------------------------------------------------ */
 
 /**
  * Apply impersonation to a newly seen tab when its host is being impersonated.
@@ -231,14 +309,18 @@ async function maybeApplyToTab(tabId, url) {
   const hosts = await getHosts();
   const entry = hosts[hostname];
   if (!entry || !entry.user) return;
+
   const tabs = await getTabs();
   if (tabs[tabId] && tabs[tabId].hostname === hostname) return;
+
   try {
-    await addRule(tabId, hostname, entry.user);
-    tabs[tabId] = { hostname };
+    await addRulesForHost(tabId, hostname, entry.user);
+    tabs[tabId] = { hostname: hostname, ruleId: tabRuleId(tabId) };
     await sessionSet(PP.SESSION.TABS, tabs);
     chrome.tabs.reload(tabId, { bypassCache: true });
-  } catch (e) {}
+  } catch (e) {
+    logDebug("Failed to apply impersonation to tab " + tabId, e);
+  }
 }
 
 chrome.tabs.onCreated.addListener((tab) => {
@@ -253,12 +335,14 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
 chrome.tabs.onRemoved.addListener(async (tabId) => {
   const tabs = await getTabs();
   if (!tabs[tabId]) return;
-  await chrome.declarativeNetRequest.updateSessionRules({ removeRuleIds: [tabId] }).catch(() => {});
+  await chrome.declarativeNetRequest
+    .updateSessionRules({ removeRuleIds: [tabs[tabId].ruleId] })
+    .catch((e) => logDebug("Failed to remove tab rule for " + tabId, e));
   delete tabs[tabId];
   await sessionSet(PP.SESSION.TABS, tabs);
 });
 
-/* --- Message API ------------------------------------------------------ */
+/* --- Message API -------------------------------------------------------- */
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   (async () => {
@@ -307,7 +391,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   return true; // keep the channel open for the async response
 });
 
-/* --- Lifecycle cleanup ------------------------------------------------ */
+/* --- Lifecycle cleanup -------------------------------------------------- */
 
 /**
  * Session rules and storage.session are cleared by the browser on restart;
@@ -319,11 +403,16 @@ chrome.runtime.onInstalled.addListener(async () => {
     const rules = await chrome.declarativeNetRequest.getSessionRules();
     const ids = rules.map((rule) => rule.id);
     if (ids.length) await chrome.declarativeNetRequest.updateSessionRules({ removeRuleIds: ids });
-  } catch (e) {}
-  await chrome.storage.session.remove([PP.SESSION.HOSTS, PP.SESSION.TABS]).catch(() => {});
+  } catch (e) {
+    logDebug("Failed to clear session rules on install/update.", e);
+  }
+  await chrome.storage.session
+    .remove([PP.SESSION.HOSTS, PP.SESSION.TABS])
+    .catch((e) => logDebug("Failed to clear session storage on install/update.", e));
 });
 
-/* --- Toolbar action --------------------------------------------------- */
+/* --- Toolbar action ----------------------------------------------------- */
+
 chrome.action.onClicked.addListener(async (tab) => {
   if (!tab || tab.id == null) return;
   try {

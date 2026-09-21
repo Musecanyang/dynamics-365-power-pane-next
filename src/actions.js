@@ -77,7 +77,7 @@ window.POWER_PANE_ACTIONS = [
   { id: "changed-fields", group: "Form", label: "Changed Fields", command: "changedFields" },
   { id: "refresh-subgrids", group: "Form", label: "Refresh Subgrids", command: "refreshSubgrids" },
   { id: "refresh-no-save", group: "Form", label: "Refresh Without Save", command: "refreshWithoutSave" },
-  { id: "all-fields", group: "Form", label: "All Fields (Web API)", command: "allFields" },
+  { id: "all-fields", group: "Form", label: "All Fields", command: "allFields" },
   { id: "table-processes", group: "Form", label: "Table Processes", command: "tableProcesses" },
 
   // Navigation
