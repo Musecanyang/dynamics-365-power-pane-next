@@ -1,0 +1,68 @@
+name: Release
+
+# Creates a GitHub Release whenever a version tag (v1.2.3) is pushed, using the
+# matching section of CHANGELOG.md as the release notes. Publishing a Release is
+# a separate step from pushing the tag itself - this workflow automates it.
+on:
+  push:
+    tags:
+      - "v*"
+
+# Only the built-in token is needed; `contents: write` lets it create the Release.
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Extract release notes from CHANGELOG.md
+        run: |
+          node <<'NODE'
+          const fs = require("fs");
+
+          const tag = process.env.GITHUB_REF_NAME; // e.g. "v1.1.0"
+          const version = tag.replace(/^v/, "");
+          const changelog = fs.readFileSync("CHANGELOG.md", "utf8").split(/\r?\n/);
+
+          // Find the heading for this version, then take every line up to the
+          // next version heading and drop the trailing link definitions.
+          const isHeading = (line) => /^##\s+\[/.test(line);
+          const start = changelog.findIndex((line) => line.startsWith("## [" + version + "]"));
+          if (start === -1) {
+            console.error("No CHANGELOG.md section for " + version);
+            process.exit(1);
+          }
+          let end = changelog.length;
+          for (let i = start + 1; i < changelog.length; i++) {
+            if (isHeading(changelog[i])) {
+              end = i;
+              break;
+            }
+          }
+
+          const notes = changelog
+            .slice(start + 1, end)
+            .join("\n")
+            .replace(/\n+\[[^\]]+\]:\s+\S+[\s\S]*$/, "")
+            .trim();
+          if (!notes) {
+            console.error("CHANGELOG.md section for " + version + " is empty");
+            process.exit(1);
+          }
+
+          fs.writeFileSync("release-notes.md", notes + "\n");
+          console.log("Prepared notes for " + version + " (" + notes.split("\n").length + " lines)");
+          NODE
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            --title "$GITHUB_REF_NAME" \
+            --notes-file release-notes.md \
+            --verify-tag
