@@ -1,6 +1,6 @@
 # Dynamics 365 Power Pane Next
 
-[![Version](https://img.shields.io/badge/version-1.1.0-blue.svg)](https://github.com/Musecanyang/dynamics-365-power-pane-next/releases)
+[![Version](https://img.shields.io/badge/version-1.2.0-blue.svg)](https://github.com/Musecanyang/dynamics-365-power-pane-next/releases)
 [![Manifest V3](https://img.shields.io/badge/manifest-v3-brightgreen.svg)](https://developer.chrome.com/docs/extensions/develop/migrate/what-is-mv3)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![CI](https://github.com/Musecanyang/dynamics-365-power-pane-next/actions/workflows/ci.yml/badge.svg)](https://github.com/Musecanyang/dynamics-365-power-pane-next/actions/workflows/ci.yml)
@@ -46,8 +46,8 @@ Actions are grouped in the pane exactly as listed here.
 | --- | --- |
 | `User Info` | Current user's name, id and security roles / teams. |
 | `Form Context` | Client URL, entity, record id, **form name/id** and form type (code + meaning). |
-| `Execute Fetch XML` | Runs a FetchXML query through the Organization service and pretty-prints the result. |
-| `FetchXML Snippets` | Save, edit, reuse and run named FetchXML queries. |
+| `Run Code` | Runs JavaScript (with `xrm` in scope) or a FetchXML query through the Organization service and shows the result. |
+| `FetchXML Snippets` | Save, edit, reuse and run named FetchXML / JavaScript snippets. |
 
 ### Impersonation
 | Action | What it does |
@@ -100,6 +100,12 @@ Actions are grouped in the pane exactly as listed here.
 Microsoft's documented model-driven app troubleshooting URL flags, applied and
 reloaded by the extension.
 
+**Developer debug switch**: swallowed network failures inside the UI are
+logged via `PPUtil.debugLog` - run `localStorage.setItem("__ppNextDebug", "1")`
+once in the Dynamics page (or on the options page) and a console `debug` line
+appears for every silently degraded call (metadata load, searches,
+impersonation status).
+
 | Action | URL parameter |
 | --- | --- |
 | `Forms Monitor` | `monitor=true` |
@@ -134,7 +140,7 @@ The extension has two in-page halves plus a service worker:
 
 ```mermaid
 flowchart LR
-  UI["content/content.js<br/>(isolated world UI)"]
+  UI["content/core.js + content/features/*<br/>(isolated world UI)"]
   BR["content/main-world.js<br/>(MAIN world bridge)"]
   BG["background.js<br/>(service worker)"]
   XRM["Xrm / Dataverse Web API"]
@@ -145,15 +151,29 @@ flowchart LR
   BR -- "Xrm + fetch /api/data" --> XRM
 ```
 
-- **`content/content.js`** builds the pane in a Shadow DOM, reads/writes
-  preferences, and talks to the bridge.
-- **`content/main-world.js`** runs in the page's MAIN world so it can use the
-  global `Xrm` client API and the Dataverse Web API. It exposes a small command
-  table (`message`, `output`, `table`, `users`, `items`).
+- **`content/core.js`** builds the pane in a Shadow DOM, reads/writes
+  preferences, owns the shared UI primitives (modals, result renderers,
+  action bar, input dialog) and exports the feature-module surface
+  `window.PPPane`; **`content/boot.js`** calls `PPPane.boot()` after all
+  feature modules have loaded.
+- **`content/features/*.js`** are the self-contained feature editors
+  (`impersonation`, `user-access` = User Permissions, `snippets` = FetchXML/JS
+  library). They register their local actions and mount hooks with the core
+  and share `state` / helpers only through the explicit `PPPane` surface.
+- **`content/main-world.js`** is the MAIN-world entry: Xrm / Web API plumbing
+  (`webApiGet` family, URL helpers, the SOAP parser) plus the command
+  registry, frozen as `window.PPMain`. **`content/commands/*.js`** hold the
+  command handlers grouped like `src/actions.js` groups (`general`, `runcode`,
+  `records`, `forms`, `navigation`, `security`, `debug`) and register each one
+  via `PPmain.register`; cross-command reads go through `PPmain.get`. Every
+  handler answers with a small data table (`message`, `output`, `table`,
+  `users`, `items`).
 - **`background.js`** owns impersonation: it adds the `CallerObjectId` header to
   the environment's requests with `declarativeNetRequest` session rules.
 - **`src/constants.js`** is the single source of truth for storage keys, message
-  types and the product name; **`src/actions.js`** is the action registry.
+  types and the product name; **`src/util.js`** holds the pure helpers shared
+  by the content script and the options page; **`src/actions.js`** is the
+  action registry.
 
 ### Impersonation
 
@@ -243,11 +263,28 @@ manifest.json                 MV3 manifest (content scripts, background, options
 background.js                 service worker: toolbar toggle + impersonation (DNR)
 src/
   constants.js                shared constants (name, storage keys, message types)
+  util.js                     pure helpers shared by the content script + options
   actions.js                  action registry (the single source of truth)
 content/
-  content.js                  isolated-world UI (Shadow DOM pane, prefs, modals,
-                              impersonation/user-access/snippets editors)
-  main-world.js               MAIN-world bridge (Xrm + Web API command handlers)
+  core.js                     isolated-world pane: Shadow DOM UI, prefs, modals,
+                              result renderers, bridge plumbing, PPPane surface
+  features/
+    impersonation.js          user search, real impersonation, DNR debug dialog
+    user-access.js            User Permissions editor (roles / teams / BU / copy)
+    snippets.js               FetchXML / JS snippet library
+  boot.js                     calls PPPane.boot() after all modules have loaded
+  main-world.js               MAIN-world entry: Xrm / Web API plumbing + the
+                              command registry (frozen as window.PPMain)
+  commands/
+    general.js                diagnostics / context handlers
+    runcode.js                FetchXML execute + JavaScript snippet runner
+    records.js                record-centric handlers (ids / urls / properties)
+    forms.js                  form editing handlers (fields / logical names ...)
+    navigation.js             "open / go to" URL navigation handlers
+    security.js               user access + role / team / business-unit writes
+    debug.js                  Microsoft URL-flag + DNR debug handlers
+scripts/                      Node guardrails (syntax + bridge-marker checks)
+tests/                        unit tests (shared pure helpers, SOAP parser)
 options/
   options.html, options.js    visibility / order / shortcuts / theme
 icons/                        toolbar icons
@@ -255,10 +292,13 @@ icons/                        toolbar icons
 
 ### Adding an action
 
-1. Add a handler in `content/main-world.js` returning `{ message }`,
-   `{ output }`, `{ table }` (or `{ users }` / `{ items }`).
+1. Add a handler in the matching `content/commands/<domain>.js` file, register
+   it with `PPmain.register("<command>", function (...) { return ... })`,
+   returning `{ message }`, `{ output }`, `{ table }` (or `{ users }` /
+   `{ items }`).
 2. Register it in `src/actions.js` with a stable `id`, `group`, `label` and
-   `command`. Use `local: true` for actions handled in `content.js` instead.
+   `command`. Use `local: true` for actions handled in a feature module
+   (`content/features/*.js`, via `PPPane.registerLocal`) instead.
 3. (Optional) add inputs via the `inputs` array — `entity: true` gives an entity
    search field, `defaultCurrent: true` pre-fills the current entity.
 
