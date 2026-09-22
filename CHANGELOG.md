@@ -5,9 +5,18 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.2.1] - 2026-09-22
 
 ### Fixed
+- **Execute FetchXML showed the raw SOAP XML for successful but EMPTY
+  queries**: a reply carrying an EntityCollection wrapper with 0 records was
+  treated as a parse failure and fell back to the raw-XML dialog. The parser
+  now recognises the empty Execute/RetrieveMultiple wrapper
+  (`i:type="a:EntityCollection"`) and Run Code opens the regular result
+  dialog: "Query executed successfully - no records matched." with the
+  entity name / record count / more-records lines (a corner toast read like
+  an error); the raw XML view stays reserved for SOAP faults and non-entity
+  replies. Regression-tested with a new `tests/fixtures/executeResponse-empty.xml`.
 - **User Permissions Save surfaced only "HTTP 400"**: write failures now
   surface the platform's real OData error message on every Web API call
   (`webPatch` / `webAssoc` / `webDisassoc` / `webApiGet`), e.g. unknown
@@ -210,7 +219,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Initial public version: in-page Shadow-DOM pane with General, Record, Form,
   Navigation, Debug and Admin actions, plus real user impersonation.
 
-[Unreleased]: https://github.com/Musecanyang/dynamics-365-power-pane-next/compare/v1.2.0...HEAD
+[Unreleased]: https://github.com/Musecanyang/dynamics-365-power-pane-next/compare/v1.2.1...HEAD
+[1.2.1]: https://github.com/Musecanyang/dynamics-365-power-pane-next/compare/v1.2.0...v1.2.1
 [1.2.0]: https://github.com/Musecanyang/dynamics-365-power-pane-next/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/Musecanyang/dynamics-365-power-pane-next/releases/tag/v1.1.0
 [1.0.2]: https://github.com/Musecanyang/dynamics-365-power-pane-next/releases/tag/v1.0.2

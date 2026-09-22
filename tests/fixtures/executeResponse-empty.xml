@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Fixture: the Execute-style SOAP envelope with a SUCCESSFUL but EMPTY reply
+  (0 records). Same Execute/ExecuteResult/Results wrapper as the real
+  envelope above; the EntityCollection simply carries no a:Entity children.
+  This is the regression case where the table branch used to fall back to
+  the raw XML dialog.
+-->
+<s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/">
+  <s:Body>
+    <ExecuteResponse xmlns="http://schemas.microsoft.com/xrm/2011/Contracts/Services">
+      <ExecuteResult xmlns:a="http://schemas.microsoft.com/xrm/2011/Contracts" xmlns:i="http://www.w3.org/2001/XMLSchema-instance" i:type="a:RetrieveMultipleResponse">
+        <a:ResponseName>RetrieveMultiple</a:ResponseName>
+        <a:Results xmlns:b="http://schemas.datacontract.org/2004/07/System.Collections.Generic">
+          <a:KeyValuePairOfstringanyType>
+            <b:key>EntityCollection</b:key>
+            <b:value i:type="a:EntityCollection">
+              <a:Entities></a:Entities>
+              <a:EntityName>sample_ownermapping</a:EntityName>
+              <a:MoreRecords>false</a:MoreRecords>
+              <a:TotalRecordCount>0</a:TotalRecordCount>
+            </b:value>
+          </a:KeyValuePairOfstringanyType>
+        </a:Results>
+      </ExecuteResult>
+    </ExecuteResponse>
+  </s:Body>
+</s:Envelope>

@@ -59,6 +59,21 @@
         head: text.slice(0, 400)
       });
     }
+    if (parsed.rows.length === 0) {
+      // An empty result is a success, but a corner toast reads like an error -
+      // give it the same result dialog as every other outcome.
+      return {
+        output: {
+          title: "Fetch XML Result",
+          description: "Query executed successfully - no records matched.",
+          items: [
+            { label: "Entity", value: parsed.entityName || "(not returned)" },
+            { label: "Records", value: "0" },
+            { label: "More records available", value: parsed.moreRecords ? "yes" : "no" }
+          ]
+        }
+      };
+    }
     if (parsed) {
       return {
         table: {

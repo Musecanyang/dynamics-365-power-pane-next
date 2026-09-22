@@ -1,6 +1,6 @@
 # Dynamics 365 Power Pane Next
 
-[![Version](https://img.shields.io/badge/version-1.2.0-blue.svg)](https://github.com/Musecanyang/dynamics-365-power-pane-next/releases)
+[![Version](https://img.shields.io/badge/version-1.2.1-blue.svg)](https://github.com/Musecanyang/dynamics-365-power-pane-next/releases)
 [![Manifest V3](https://img.shields.io/badge/manifest-v3-brightgreen.svg)](https://developer.chrome.com/docs/extensions/develop/migrate/what-is-mv3)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![CI](https://github.com/Musecanyang/dynamics-365-power-pane-next/actions/workflows/ci.yml/badge.svg)](https://github.com/Musecanyang/dynamics-365-power-pane-next/actions/workflows/ci.yml)
@@ -23,11 +23,17 @@ flip debugging switches, edit a user's roles/teams/business unit, and perform
 
 - **In-page pane** rendered in a Shadow DOM (host page styles can never leak in),
   opened from a compact button injected into the app navigation bar.
+- **Run Code** — JavaScript (page world, `xrm` in scope) or FetchXML side by
+  side; XML pastes auto-route to FetchXML; results render as searchable tables
+  with Save-to-Snippets.
+- **Snippets (FetchXML/JS)** — a device-local snippet library you can run,
+  edit, import and export.
 - **Real impersonation** via the Dataverse `CallerObjectId` request header
   (`declarativeNetRequest`), scoped so the impersonated identity survives SPA
   navigation, Advanced Find windows and reloads.
 - **User Permissions editor** — view and modify a user's business unit, security
-  roles and teams without leaving the app.
+  roles and teams without leaving the app; the role picker is scoped to the
+  user's own business unit and write failures show the platform's real error.
 - **Entity/field tooling** — field inspector, all-fields dump, option set values,
   metadata browser, table processes.
 - **Debug switches** — Microsoft's documented form troubleshooting URL flags
@@ -46,8 +52,8 @@ Actions are grouped in the pane exactly as listed here.
 | --- | --- |
 | `User Info` | Current user's name, id and security roles / teams. |
 | `Form Context` | Client URL, entity, record id, **form name/id** and form type (code + meaning). |
-| `Run Code` | A Language selector (**JavaScript** / **FetchXML**) plus a source textarea. Pasted content auto-routes: text starting with an XML tag always executes as FetchXML (even when JavaScript is selected), and pasting an XML query switches the selector automatically. JavaScript runs in the page world with `xrm` in scope (top-level `await` / `return` work); FetchXML executes through the Organization service and renders a results table (formatted values, hover tooltips, click-to-copy first column, Copy JSON); failures show the platform's actual OData error message. The result dialog offers **Save to Snippets**. |
-| `Snippets (FetchXML/JS)` | Snippet library stored in `chrome.storage.local` (device-local): create / edit / delete named snippets with a **Type** field (JavaScript or FetchXML), run them right from the list, and back the library up as JSON (Import merges, skipping exact duplicates). |
+| `Run Code` | A Language selector (**JavaScript** / **FetchXML**) plus a source textarea. Pasted content auto-routes: text starting with an XML tag always executes as FetchXML (even when JavaScript is selected), and pasting an XML query switches the selector automatically. JavaScript runs in the page world with `xrm` in scope (top-level `await` / `return` work); FetchXML executes through the Organization service and renders a results table (formatted values, hover tooltips, click-to-copy first column, Copy JSON); an empty result opens the same-style result dialog ("Query executed successfully - no records matched.") instead of a corner toast; failures show the platform's actual OData error message. The result dialog offers **Save to Snippets**. |
+| `Snippets (FetchXML/JS)` | Snippet library stored in `chrome.storage.local` (device-local): create / edit / delete named snippets with a **Type** field (JavaScript or FetchXML), run them right from the list, and back the library up as JSON (Import merges, skipping exact duplicates; importing a **JavaScript** snippet asks for confirmation before it is stored, since it runs with the signed-in user's privileges). |
 
 ### Impersonation
 | Action | What it does |
@@ -91,6 +97,9 @@ Actions are grouped in the pane exactly as listed here.
 | `Open Web API Record` | Opens the record's Dataverse Web API URL. |
 | `Entity Metadata Browser` | Attribute list (logical name, type, custom flag, required level). |
 | `Entity Editor (Classic)` / `Form Editor (Classic)` / `Form Editor (New)` | Open the classic or the Power Apps maker editors. |
+| `Solutions` / `CRM Diagnostics` | Open the classic Solutions page / the platform diagnostics page (`tools/diagnostics`). |
+| `Performance Center` | Toggle the in-app Performance Center results overlay. |
+| `Mobile Client` | Open the mobile client (`nga/main.htm`) for the current org. |
 | `Open Entity List` / `System Jobs` / `Processes` / `Mailboxes` | Jump to common entity lists. |
 | `Home` / `Open Advanced Find` | Navigate to the app home / advanced find. |
 | `Security (Admin)` / `Solutions History` / `Advanced Settings - Users` | Admin portals and classic area (auto-navigates to Security → Users). |
@@ -222,6 +231,12 @@ There is **no build step** — the source you load is the source you edit.
   <kbd>Enter</kbd> navigate and run.
 - The pane closes when you run an action, click outside, move the pointer away,
   or press <kbd>Esc</kbd>.
+- **Run Code:** `General → Run Code`. Pick the language (or paste and let the
+  content auto-route), paste the source, **Run**. The result dialog can
+  **Save to Snippets**, pin or float like any popup.
+- **Snippets:** `General → Snippets (FetchXML/JS)`; run a snippet from the
+  list, edit or create one (Type = JavaScript / FetchXML), or import / export
+  the library as a JSON backup file.
 - **Impersonate:** `Impersonation → Impersonate User`, search by name/email,
   click a result. Recent users are kept; the star pins a user.
 - **User Permissions:** `Admin → User Permissions (view/edit)`, search a user,
@@ -237,7 +252,10 @@ Open the options page from the pane's ⚙ button or the extension's options:
 - drag to reorder within a group,
 - record a keyboard shortcut per action (press <kbd>Backspace</kbd> while
   recording to clear),
-- choose theme, reset the pane position, or restore all defaults.
+- choose theme, reset the pane position, or restore all defaults,
+- **Export** / **Import** the full configuration (action visibility, order,
+  theme, shortcuts and the snippet library) as a single
+  `power-pane-settings.json` file.
 
 ---
 
@@ -283,8 +301,8 @@ content/
     navigation.js             "open / go to" URL navigation handlers
     security.js               user access + role / team / business-unit writes
     debug.js                  Microsoft URL-flag + DNR debug handlers
-scripts/                      Node guardrails (syntax + bridge-marker checks)
-tests/                        unit tests (shared pure helpers, SOAP parser)
+scripts/                      Node guardrails (syntax + bridge/debug-marker checks)
+tests/                        unit tests (contract snapshot, SOAP parser, helpers)
 options/
   options.html, options.js    visibility / order / shortcuts / theme
 icons/                        toolbar icons
@@ -295,7 +313,9 @@ icons/                        toolbar icons
 1. Add a handler in the matching `content/commands/<domain>.js` file, register
    it with `PPmain.register("<command>", function (...) { return ... })`,
    returning `{ message }`, `{ output }`, `{ table }` (or `{ users }` /
-   `{ items }`).
+   `{ items }`). Destructure the helpers you need from `PPmain`
+   (`tests/contract.test.js` asserts every destructured key exists, so a
+   missing contract key fails CI instead of breaking your action at runtime).
 2. Register it in `src/actions.js` with a stable `id`, `group`, `label` and
    `command`. Use `local: true` for actions handled in a feature module
    (`content/features/*.js`, via `PPPane.registerLocal`) instead.

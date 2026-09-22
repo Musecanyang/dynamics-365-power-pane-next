@@ -169,3 +169,16 @@ test("REAL Execute-style response (user org): parses to a table, not the raw fal
   assert.equal(result.rows[0].sample_ownermappingid, "11111111-2222-3333-4444-555555555555");
   assert.equal(result.columns[0], "id");
 });
+
+test("REAL Execute-style EMPTY reply: parses to an empty table, not the raw fallback", () => {
+  // Successful query with 0 records: the Execute/Results wrapper is present
+  // but carries no a:Entity children - the "no records" case rendered the
+  // raw XML dialog before this fix.
+  const emptyEnvelope = fs.readFileSync(path.join(FIXTURES, "executeResponse-empty.xml"), "utf8");
+  const result = parse(emptyEnvelope);
+  assert.notEqual(result, null, "an empty EntityCollection is a successful reply");
+  assert.equal(result.entityName, "sample_ownermapping");
+  assert.deepEqual(result.rows, []);
+  assert.deepEqual(result.columns, []);
+  assert.deepEqual(result.payload.records, []);
+});

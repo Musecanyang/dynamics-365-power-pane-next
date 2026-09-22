@@ -1,7 +1,7 @@
 {
   "name": "dynamics-365-power-pane-next",
   "description": "In-page action pane, diagnostics and real user impersonation for Microsoft Dynamics 365 / Dataverse.",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "private": true,
   "license": "MIT",
   "scripts": {

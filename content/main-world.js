@@ -498,6 +498,24 @@
   }
 
   /**
+   * Locate the EntityCollection wrapper element of an Execute/RetrieveMultiple
+   * SOAP reply by its `i:type="a:EntityCollection"` marker. Used for
+   * zero-record replies where there is no a:Entity left to reach the wrapper
+   * via parentNode.
+   * @param {Document} doc
+   * @returns {Element|null}
+   */
+  function findEntityCollectionWrapper(doc) {
+    const all = doc.getElementsByTagName("*");
+    for (let i = 0; i < all.length; i++) {
+      const node = all[i];
+      const type = node.getAttribute && node.getAttribute("i:type");
+      if (type && /(^|:)EntityCollection$/.test(type)) return node;
+    }
+    return null;
+  }
+
+  /**
    * Parse a RetrieveMultiple SOAP response into a record table. Returns null
    * when the envelope carries no entity collection (SOAP fault, unexpected
    * shape), so the caller can fall back to the raw response view.
@@ -514,11 +532,21 @@
     if (doc.getElementsByTagName("parsererror").length) return null;
     if (doc.getElementsByTagNameNS(SOAP_ENVELOPE_NS, "Fault").length) return null;
     const entities = doc.getElementsByTagNameNS(SOAP_XRM_NS, "Entity");
-    if (!entities.length) return null;
 
     // a:Entities sits inside the EntityCollection value element, which also
     // carries EntityName / MoreRecords / TotalRecordCount as siblings.
-    const collectionElement = entities[0].parentNode.parentNode;
+    let collectionElement;
+    if (entities.length) {
+      collectionElement = entities[0].parentNode.parentNode;
+    } else {
+      // A zero-record result is a SUCCESSFUL query, not a parse failure:
+      // an Execute/RetrieveMultiple reply with an EntityCollection wrapper
+      // (even empty) parses to an empty table. Only when no wrapper exists
+      // at all (SOAP fault handled above, anything that is not a query
+      // reply) do we return null for the raw fallback view.
+      collectionElement = findEntityCollectionWrapper(doc);
+      if (!collectionElement) return null;
+    }
     const readSibling = function (localName) {
       const node = childElement(collectionElement, localName);
       return node ? node.textContent : "";
@@ -594,6 +622,21 @@
       payloadRecords.push(payloadRecord);
     }
 
+    if (!rows.length) {
+      return {
+        entityName: entityName,
+        moreRecords: moreRecords,
+        totalRecordCount: totalRecordCount,
+        columns: [],
+        rows: [],
+        payload: {
+          entityName: entityName,
+          moreRecords: moreRecords,
+          totalRecordCount: totalRecordCount,
+          records: []
+        }
+      };
+    }
     if (!columnOrder.length) return null;
     return {
       entityName: entityName,
