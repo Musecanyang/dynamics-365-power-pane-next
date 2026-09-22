@@ -1,16 +1,2 @@
-# Dependencies (if a build step is ever added)
 node_modules/
-dist/
-build/
-
-# Editor / OS noise
-.DS_Store
-Thumbs.db
 *.log
-.vscode/
-.idea/
-
-# Packaged extension artifacts
-*.zip
-*.crx
-*.pem

@@ -1,0 +1,88 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Fixture: a (trimmed) SOAP RetrieveMultipleResponse, mirroring the shape the
+  Organization.svc returns for fetch XML queries. Namespace layout follows what
+  parseRetrieveMultipleResponse queries: the Entities subtree resolves into the
+  XRM contracts namespace (http://schemas.microsoft.com/xrm/2011/Contracts) and
+  the Envelope/Fault into http://schemas.xmlsoap.org/soap/envelope/.
+-->
+<s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/" xmlns:a="http://schemas.microsoft.com/xrm/2011/Contracts" xmlns:i="http://www.w3.org/2001/XMLSchema-instance">
+  <s:Body>
+    <ExecuteResponse xmlns="http://schemas.microsoft.com/xrm/2011/Contracts/Services">
+      <ExecuteResult xmlns:b="http://schemas.microsoft.com/xrm/2011/Contracts">
+        <b:Results>
+          <b:Elements i:type="b:EntityCollection">
+            <b:EntityName>msdyn_workorder</b:EntityName>
+            <b:MoreRecords>true</b:MoreRecords>
+            <b:TotalRecordCount>3</b:TotalRecordCount>
+            <b:Entities>
+              <b:Entity>
+                <b:Id>aaaaaaaa-1111-2222-3333-444444444444</b:Id>
+                <b:Attributes>
+                  <a:KeyValuePairOfstringanyType>
+                    <a:key>msdyn_name</a:key>
+                    <a:value i:type="b:String">WO-1001</a:value>
+                  </a:KeyValuePairOfstringanyType>
+                  <a:KeyValuePairOfstringanyType>
+                    <a:key>primaryuser</a:key>
+                    <a:value i:type="b:EntityReference">
+                      <a:Id>bbbbbbbb-1111-2222-3333-444444444444</a:Id>
+                      <a:LogicalName>systemuser</a:LogicalName>
+                      <a:Name>Example Agent</a:Name>
+                    </a:value>
+                  </a:KeyValuePairOfstringanyType>
+                  <a:KeyValuePairOfstringanyType>
+                    <a:key>createdon</a:key>
+                    <a:value i:type="b:DateTime">2026-09-01T08:00:00Z</a:value>
+                  </a:KeyValuePairOfstringanyType>
+                </b:Attributes>
+                <b:FormattedValues>
+                  <a:KeyValuePairOfstringanyType>
+                    <a:key>createdon</a:key>
+                    <a:value>2026/9/1 16:00</a:value>
+                  </a:KeyValuePairOfstringanyType>
+                </b:FormattedValues>
+              </b:Entity>
+              <b:Entity>
+                <b:Id>bbbbbbbb-1111-2222-3333-444444444444</b:Id>
+                <b:Attributes>
+                  <a:KeyValuePairOfstringanyType>
+                    <a:key>msdyn_name</a:key>
+                    <a:value i:type="b:String">WO-1002</a:value>
+                  </a:KeyValuePairOfstringanyType>
+                </b:Attributes>
+              </b:Entity>
+              <b:Entity>
+                <b:Id>cccccccc-1111-2222-3333-444444444444</b:Id>
+                <b:Attributes>
+                  <a:KeyValuePairOfstringanyType>
+                    <a:key>statecode</a:key>
+                    <a:value i:type="b:OptionSetValue">1</a:value>
+                  </a:KeyValuePairOfstringanyType>
+                  <a:KeyValuePairOfstringanyType>
+                    <a:key>createdby</a:key>
+                    <a:value i:type="b:EntityReference">
+                      <a:Id>00000000-0000-0000-0000-000000000001</a:Id>
+                      <a:LogicalName>systemuser</a:LogicalName>
+                      <a:Name>SYSTEM</a:Name>
+                    </a:value>
+                  </a:KeyValuePairOfstringanyType>
+                </b:Attributes>
+                <b:FormattedValues>
+                  <a:KeyValuePairOfstringanyType>
+                    <a:key>statecode</a:key>
+                    <a:value>Suspended</a:value>
+                  </a:KeyValuePairOfstringanyType>
+                  <a:KeyValuePairOfstringanyType>
+                    <a:key>createdby</a:key>
+                    <a:value>SYSTEM</a:value>
+                  </a:KeyValuePairOfstringanyType>
+                </b:FormattedValues>
+              </b:Entity>
+            </b:Entities>
+          </b:Elements>
+        </b:Results>
+      </ExecuteResult>
+    </ExecuteResponse>
+  </s:Body>
+</s:Envelope>

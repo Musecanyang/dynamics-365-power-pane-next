@@ -1,69 +1,34 @@
 name: CI
 
+# Static guardrails for the extension sources: Node parse check and manifest
+# JSON verification, the constants <-> MAIN-world bridge marker assertion,
+# ESLint and unit tests. Loading the extension in a browser remains the final
+# acceptance step for behaviour.
+
 on:
   push:
-    branches: [main]
+    branches: ["**"]
   pull_request:
-    branches: [main]
 
 jobs:
-  validate:
+  ci:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
+      - uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: 22
+          cache: npm
 
-      - name: Validate manifest.json
-        run: node -e "JSON.parse(require('fs').readFileSync('manifest.json','utf8')); console.log('manifest.json OK')"
+      - name: Install tooling
+        run: npm ci
 
-      - name: Syntax-check JavaScript
-        run: |
-          set -e
-          for f in background.js \
-                   content/content.js \
-                   content/main-world.js \
-                   src/actions.js \
-                   src/constants.js \
-                   options/options.js; do
-            node --check "$f"
-            echo "OK  $f"
-          done
+      - name: Syntax check all shipped scripts
+        run: npm run check
 
-      - name: Ensure action ids are unique
-        run: |
-          node -e "
-            const fs = require('fs');
-            const src = fs.readFileSync('src/actions.js', 'utf8');
-            const ids = [...src.matchAll(/id:\s*\"([^\"]+)\"/g)].map(m => m[1]);
-            const seen = new Set();
-            const dupes = ids.filter(id => (seen.has(id) ? true : (seen.add(id), false)));
-            if (dupes.length) { console.error('Duplicate action ids:', dupes); process.exit(1); }
-            console.log(ids.length + ' action ids, all unique');
-          "
+      - name: Lint
+        run: npm run lint
 
-      - name: Ensure bridge markers stay in sync
-        run: |
-          node -e "
-            const fs = require('fs');
-            const constants = fs.readFileSync('src/constants.js', 'utf8');
-            const mainWorld = fs.readFileSync('content/main-world.js', 'utf8');
-            const bridge = constants.match(/BRIDGE:\s*\{([\s\S]*?)\}/);
-            if (!bridge) { console.error('BRIDGE block not found in src/constants.js'); process.exit(1); }
-            const pick = (src, re, name) => { const m = src.match(re); if (!m) { console.error('Missing ' + name); process.exit(1); } return m[1]; };
-            const cKey = pick(bridge[1], /KEY:\s*\"([^\"]+)\"/, 'constants KEY');
-            const cReq = pick(bridge[1], /REQUEST:\s*\"([^\"]+)\"/, 'constants REQUEST');
-            const cRes = pick(bridge[1], /RESPONSE:\s*\"([^\"]+)\"/, 'constants RESPONSE');
-            const mKey = pick(mainWorld, /BRIDGE_KEY\s*=\s*\"([^\"]+)\"/, 'main-world BRIDGE_KEY');
-            const mReq = pick(mainWorld, /BRIDGE_REQUEST\s*=\s*\"([^\"]+)\"/, 'main-world BRIDGE_REQUEST');
-            const mRes = pick(mainWorld, /BRIDGE_RESPONSE\s*=\s*\"([^\"]+)\"/, 'main-world BRIDGE_RESPONSE');
-            if (cKey !== mKey || cReq !== mReq || cRes !== mRes) {
-              console.error('Bridge markers out of sync:', { cKey, cReq, cRes, mKey, mReq, mRes });
-              process.exit(1);
-            }
-            console.log('Bridge markers in sync: ' + cKey + ' / ' + cReq + ' / ' + cRes);
-          "
+      - name: Unit tests
+        run: npm test

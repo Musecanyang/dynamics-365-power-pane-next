@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Dynamics 365 Power Pane Next",
   "short_name": "Power Pane Next",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "In-page action pane, diagnostics and real user impersonation for Microsoft Dynamics 365 / Dataverse.",
   "minimum_chrome_version": "111",
   "permissions": [
@@ -17,7 +17,14 @@
     {
       "matches": ["https://*.dynamics.com/*"],
       "js": [
-        "content/main-world.js"
+        "content/main-world.js",
+        "content/commands/general.js",
+        "content/commands/runcode.js",
+        "content/commands/records.js",
+        "content/commands/forms.js",
+        "content/commands/navigation.js",
+        "content/commands/security.js",
+        "content/commands/debug.js"
       ],
       "world": "MAIN",
       "run_at": "document_idle",
@@ -27,8 +34,13 @@
       "matches": ["https://*.dynamics.com/*"],
       "js": [
         "src/constants.js",
+        "src/util.js",
         "src/actions.js",
-        "content/content.js"
+        "content/core.js",
+        "content/features/impersonation.js",
+        "content/features/user-access.js",
+        "content/features/snippets.js",
+        "content/boot.js"
       ],
       "run_at": "document_idle",
       "all_frames": false

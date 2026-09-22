@@ -1,0 +1,60 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Fixture: the REAL Execute-style SOAP envelope captured from the user's org.
+  The entity collection is wrapped in the Execute/ExecuteResult/Results pairs
+  shape (not the plain RetrieveMultiple shape). Keys live in the b: namespace
+  (System.Collections.Generic data contract), Values in a:/c: mixed prefixes.
+-->
+<s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/">
+  <s:Body>
+    <ExecuteResponse xmlns="http://schemas.microsoft.com/xrm/2011/Contracts/Services">
+      <ExecuteResult xmlns:a="http://schemas.microsoft.com/xrm/2011/Contracts" xmlns:i="http://www.w3.org/2001/XMLSchema-instance" i:type="a:RetrieveMultipleResponse">
+        <a:ResponseName>RetrieveMultiple</a:ResponseName>
+        <a:Results xmlns:b="http://schemas.datacontract.org/2004/07/System.Collections.Generic">
+          <a:KeyValuePairOfstringanyType>
+            <b:key>EntityCollection</b:key>
+            <b:value i:type="a:EntityCollection">
+              <a:Entities>
+                <a:Entity>
+                  <a:Attributes>
+                    <a:KeyValuePairOfstringanyType>
+                      <b:key>sample_ownermappingid</b:key>
+                      <b:value xmlns:c="http://schemas.microsoft.com/2003/10/Serialization/" i:type="c:guid">11111111-2222-3333-4444-555555555555</b:value>
+                    </a:KeyValuePairOfstringanyType>
+                    <a:KeyValuePairOfstringanyType>
+                      <b:key>sample_casetype</b:key>
+                      <b:value i:type="a:OptionSetValue">
+                        <a:Value>100000001</a:Value>
+                      </b:value>
+                    </a:KeyValuePairOfstringanyType>
+                    <a:KeyValuePairOfstringanyType>
+                      <b:key>sample_serviceorgid</b:key>
+                      <b:value i:type="a:EntityReference">
+                        <a:Id>99999999-8888-7777-6666-555555555555</a:Id>
+                        <a:LogicalName>businessunit</a:LogicalName>
+                        <a:Name>Example Business Unit</a:Name>
+                      </b:value>
+                    </a:KeyValuePairOfstringanyType>
+                  </a:Attributes>
+                  <a:Id>11111111-2222-3333-4444-555555555555</a:Id>
+                </a:Entity>
+                <a:Entity>
+                  <a:Attributes>
+                    <a:KeyValuePairOfstringanyType>
+                      <b:key>createdon</b:key>
+                      <b:value xmlns:c="http://www.w3.org/2001/XMLSchema" i:type="c:dateTime">2021-04-25T02:49:15Z</b:value>
+                    </a:KeyValuePairOfstringanyType>
+                  </a:Attributes>
+                  <a:Id>66666666-7777-8888-9999-000000000000</a:Id>
+                </a:Entity>
+              </a:Entities>
+              <a:EntityName>sample_ownermapping</a:EntityName>
+              <a:MoreRecords>false</a:MoreRecords>
+              <a:TotalRecordCount>-1</a:TotalRecordCount>
+            </b:value>
+          </a:KeyValuePairOfstringanyType>
+        </a:Results>
+      </ExecuteResult>
+    </ExecuteResponse>
+  </s:Body>
+</s:Envelope>

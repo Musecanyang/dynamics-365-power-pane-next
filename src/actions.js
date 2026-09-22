@@ -27,11 +27,14 @@ window.POWER_PANE_ACTIONS = [
   {
     id: "fetch-xml",
     group: "General",
-    label: "Execute Fetch XML",
+    label: "Run Code",
     command: "executeFetchXml",
-    inputs: [{ name: "xml", label: "FetchXML", type: "textarea", placeholder: "&lt;fetch&gt;...&lt;/fetch&gt;" }]
+    inputs: [
+      { name: "mode", label: "Language", type: "select", options: [["js", "JavaScript"], ["fetchxml", "FetchXML"]] },
+      { name: "xml", label: "Source", type: "textarea", placeholder: "" }
+    ]
   },
-  { id: "fetch-snippets", group: "General", label: "FetchXML Snippets", command: "snippets", local: true },
+  { id: "fetch-snippets", group: "General", label: "Snippets (FetchXML/JS)", command: "snippets", local: true },
 
   // Impersonation
   { id: "impersonate", group: "Impersonation", label: "Impersonate User", command: "impersonate", local: true },

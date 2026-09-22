@@ -24,7 +24,7 @@
 (function (global) {
   "use strict";
 
-  var PP = {
+  const PP = {
     /** Product identity. */
     NAME: "Dynamics 365 Power Pane Next",
     SHORT_NAME: "Power Pane Next",
@@ -40,16 +40,20 @@
       SETTINGS: "ppSettings",
       THEME: "ppTheme",
       SHORTCUTS: "ppShortcuts",
-      SNIPPETS: "ppSnippets",
       ORDER: "ppOrder"
     },
 
-    /** chrome.storage.local keys (device-specific UI state). */
+    /**
+     * chrome.storage.local keys (device-specific state and large data).
+     * SNIPPETS shares its key name with the old storage.sync location so the
+     * one-time migration in content.js can find legacy copies.
+     */
     LOCAL: {
       RECENT_USERS: "ppRecentUsers",
       PINNED_USERS: "ppPinnedUsers",
       LAYOUT: "ppLayout3",
-      AUTO_OPEN_USERS: "ppAutoUsers"
+      AUTO_OPEN_USERS: "ppAutoUsers",
+      SNIPPETS: "ppSnippets"
     },
 
     /** chrome.storage.session keys (impersonation runtime state). */
@@ -79,7 +83,16 @@
       KEY: "__ppNext",
       REQUEST: "req",
       RESPONSE: "res"
-    }
+    },
+
+    /**
+     * localStorage debug-gate key (set to "1" to switch on debugLog
+     * breadcrumbs for silently-degraded calls). Used by PPUtil.debugLog.
+     * content/main-world.js keeps its OWN copy (DEBUG_KEY) because MAIN-world
+     * scripts cannot load this file - scripts/check-bridge-sync.js asserts the
+     * two copies stay identical, same pattern as the BRIDGE markers above.
+     */
+    DEBUG: "__ppNextDebug"
   };
 
   try {

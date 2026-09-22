@@ -10,19 +10,19 @@
 (function () {
   "use strict";
 
-  var PP = window.PP;
-  var ACTIONS = window.POWER_PANE_ACTIONS || [];
+  const PP = window.PP;
+  const ACTIONS = window.POWER_PANE_ACTIONS || [];
 
   /** Lookup table action id -> action definition. */
-  var actionsById = {};
+  const actionsById = {};
   ACTIONS.forEach(function (action) {
     actionsById[action.id] = action;
   });
 
   /** Group order follows the declaration order in actions.js. */
-  var GROUP_ORDER = [];
+  const GROUP_ORDER = [];
   (function () {
-    var seen = {};
+    const seen = {};
     ACTIONS.forEach(function (action) {
       if (!seen[action.group]) {
         seen[action.group] = true;
@@ -31,22 +31,22 @@
     });
   })();
 
-  var listEl = document.getElementById("list");
-  var themeSelect = document.getElementById("theme");
-  var statusEl = document.getElementById("status");
+  const listEl = document.getElementById("list");
+  const themeSelect = document.getElementById("theme");
+  const statusEl = document.getElementById("status");
   document.getElementById("title").textContent = PP.NAME + " - Options";
 
   /** Working state (flushed to storage on Save). */
-  var order = ACTIONS.map(function (action) {
+  let order = ACTIONS.map(function (action) {
     return action.id;
   });
-  var visibility = {}; // action id -> visible (boolean)
-  var shortcuts = {}; // action id -> "Ctrl+Alt+K" style combo
-  var dragId = null;
-  var recording = null;
+  let visibility = {}; // action id -> visible (boolean)
+  let shortcuts = {}; // action id -> "Ctrl+Alt+K" style combo
+  let dragId = null;
+  let recording = null;
 
   /** @type {number|undefined} handle for the transient status timeout. */
-  var statusTimer;
+  let statusTimer;
 
   /** Show a transient status message that fades after 1.5s. */
   function setStatus(message) {
@@ -78,6 +78,25 @@
     });
   }
 
+  /** Wrap chrome.storage.local.get in a Promise. */
+  function localGet(key, fallback) {
+    return new Promise(function (resolve) {
+      chrome.storage.local.get({ [key]: fallback }, function (data) {
+        resolve(data[key]);
+      });
+    });
+  }
+
+  /** Wrap chrome.storage.local.set in a Promise. */
+  function localSet(key, value) {
+    return new Promise(function (resolve) {
+      chrome.storage.local.set({ [key]: value }, resolve);
+    });
+  }
+
+  /** Trigger a client-side download (shared implementation in src/util.js). */
+  const downloadTextFile = window.PPUtil.downloadTextFile;
+
   /** Wrap chrome.storage.sync.remove in a Promise. */
   function syncRemove(keys) {
     return new Promise(function (resolve) {
@@ -92,12 +111,12 @@
    * @returns {string|null}
    */
   function comboFromEvent(event) {
-    var parts = [];
+    const parts = [];
     if (event.ctrlKey) parts.push("Ctrl");
     if (event.altKey) parts.push("Alt");
     if (event.shiftKey) parts.push("Shift");
     if (event.metaKey) parts.push("Meta");
-    var key = event.key;
+    let key = event.key;
     if (["Control", "Alt", "Shift", "Meta"].indexOf(key) > -1) return null;
     if (key === " ") key = "Space";
     if (key.length === 1) key = key.toUpperCase();
@@ -129,9 +148,9 @@
       recording = null;
       return;
     }
-    var combo = comboFromEvent(event);
+    const combo = comboFromEvent(event);
     if (!combo) return;
-    var id = recording.id;
+    const id = recording.id;
     // A combo can only be bound to one action: clear any previous binding.
     Object.keys(shortcuts).forEach(function (other) {
       if (other !== id && shortcuts[other] === combo) delete shortcuts[other];
@@ -153,16 +172,16 @@
   function render() {
     listEl.textContent = "";
     GROUP_ORDER.forEach(function (group) {
-      var fieldset = document.createElement("fieldset");
-      var legend = document.createElement("legend");
+      const fieldset = document.createElement("fieldset");
+      const legend = document.createElement("legend");
       legend.textContent = group;
       fieldset.appendChild(legend);
 
-      var ids = idsOfGroup(group);
-      var enabledIds = ids.filter(function (id) {
+      const ids = idsOfGroup(group);
+      const enabledIds = ids.filter(function (id) {
         return visibility[id] !== false;
       });
-      var disabledIds = ids.filter(function (id) {
+      const disabledIds = ids.filter(function (id) {
         return visibility[id] === false;
       });
       enabledIds.concat(disabledIds).forEach(function (id) {
@@ -174,19 +193,19 @@
 
   /** Build one editable row for an action. */
   function buildRow(actionId, group) {
-    var action = actionsById[actionId];
-    var isEnabled = visibility[actionId] !== false;
+    const action = actionsById[actionId];
+    const isEnabled = visibility[actionId] !== false;
 
-    var row = document.createElement("div");
+    const row = document.createElement("div");
     row.className = "row" + (isEnabled ? "" : " disabled");
     row.draggable = true;
     row.dataset.id = actionId;
 
-    var handle = document.createElement("span");
+    const handle = document.createElement("span");
     handle.className = "handle";
     handle.textContent = "\u22ee\u22ee";
 
-    var checkbox = document.createElement("input");
+    const checkbox = document.createElement("input");
     checkbox.type = "checkbox";
     checkbox.checked = isEnabled;
     checkbox.addEventListener("change", function () {
@@ -194,7 +213,7 @@
       render();
     });
 
-    var label = document.createElement("span");
+    const label = document.createElement("span");
     label.className = "lbl";
     label.textContent = action.label;
     label.addEventListener("click", function () {
@@ -203,7 +222,7 @@
       render();
     });
 
-    var shortcut = document.createElement("button");
+    const shortcut = document.createElement("button");
     shortcut.type = "button";
     shortcut.className = "sc";
     shortcut.textContent = shortcuts[actionId] || "none";
@@ -233,8 +252,8 @@
       event.preventDefault();
       if (!dragId || dragId === actionId) return;
       if (!actionsById[dragId] || actionsById[dragId].group !== group) return;
-      var from = order.indexOf(dragId);
-      var to = order.indexOf(actionId);
+      const from = order.indexOf(dragId);
+      const to = order.indexOf(actionId);
       if (from < 0 || to < 0) return;
       order.splice(from, 1);
       order.splice(to, 0, dragId);
@@ -246,20 +265,20 @@
 
   /** Load persisted preferences into working state. */
   async function load() {
-    var defaults = {};
+    const defaults = {};
     defaults[PP.SYNC.SETTINGS] = {};
     defaults[PP.SYNC.THEME] = PP.THEME.DARK;
     defaults[PP.SYNC.SHORTCUTS] = {};
     defaults[PP.SYNC.ORDER] = [];
-    var data = await syncGet(defaults);
+    const data = await syncGet(defaults);
 
     visibility = data[PP.SYNC.SETTINGS] || {};
     shortcuts = data[PP.SYNC.SHORTCUTS] || {};
     themeSelect.value = data[PP.SYNC.THEME] || PP.THEME.DARK;
 
     // Restore order (saved ids first, then any new actions appended).
-    var saved = data[PP.SYNC.ORDER] || [];
-    var seen = {};
+    const saved = data[PP.SYNC.ORDER] || [];
+    const seen = {};
     order = [];
     saved.forEach(function (id) {
       if (actionsById[id] && !seen[id]) {
@@ -275,11 +294,11 @@
 
   /** Persist the working state to chrome.storage.sync. */
   async function save() {
-    var settings = {};
+    const settings = {};
     order.forEach(function (id) {
       settings[id] = visibility[id] !== false;
     });
-    var payload = {};
+    const payload = {};
     payload[PP.SYNC.SETTINGS] = settings;
     payload[PP.SYNC.THEME] = themeSelect.value;
     payload[PP.SYNC.SHORTCUTS] = shortcuts;
@@ -305,11 +324,12 @@
     setStatus("Pane position reset (reopen the pane).");
   });
   document.getElementById("restore").addEventListener("click", async function () {
-    var confirmed = window.confirm(
+    const confirmed = window.confirm(
       "Restore all default settings? This clears visibility, order, theme, shortcuts and snippets."
     );
     if (!confirmed) return;
-    await syncRemove([PP.SYNC.SETTINGS, PP.SYNC.THEME, PP.SYNC.SHORTCUTS, PP.SYNC.ORDER, PP.SYNC.SNIPPETS]);
+    await syncRemove([PP.SYNC.SETTINGS, PP.SYNC.THEME, PP.SYNC.SHORTCUTS, PP.SYNC.ORDER]);
+    await localRemove(PP.LOCAL.SNIPPETS);
     await localRemove(PP.LOCAL.LAYOUT);
     visibility = {};
     shortcuts = {};
@@ -321,6 +341,118 @@
     setStatus("Defaults restored.");
   });
   document.getElementById("save").addEventListener("click", save);
+
+  /* ------------------------------------------------------------------ *
+   * Settings import / export (full backup: preferences + snippets)
+   * ------------------------------------------------------------------ */
+
+  /** Keep only well-formed {name, xml, type} entries (FetchXML is the default type). */
+  /** Snippet normalize (shared implementation in src/util.js). */
+  const sanitizeSnippets = window.PPUtil.normalizeSnippets;
+
+  document.getElementById("exportSettings").addEventListener("click", async function () {
+    const defaults = {};
+    defaults[PP.SYNC.SETTINGS] = {};
+    defaults[PP.SYNC.THEME] = PP.THEME.DARK;
+    defaults[PP.SYNC.SHORTCUTS] = {};
+    defaults[PP.SYNC.ORDER] = [];
+    const data = await syncGet(defaults);
+    const snippets = await localGet(PP.LOCAL.SNIPPETS, []);
+    const payload = {
+      type: "power-pane-settings",
+      version: 1,
+      exportedAt: new Date().toISOString(),
+      settings: data[PP.SYNC.SETTINGS] || {},
+      theme: data[PP.SYNC.THEME] || PP.THEME.DARK,
+      shortcuts: data[PP.SYNC.SHORTCUTS] || {},
+      order: data[PP.SYNC.ORDER] || [],
+      snippets: Array.isArray(snippets) ? snippets : []
+    };
+    downloadTextFile("power-pane-settings.json", JSON.stringify(payload, null, 2), "application/json");
+    setStatus("Settings exported.");
+  });
+
+  document.getElementById("importSettings").addEventListener("click", function () {
+    const input = document.createElement("input");
+    input.type = "file";
+    input.accept = ".json,application/json";
+    input.style.display = "none";
+    input.addEventListener("change", async function () {
+      const file = input.files && input.files[0];
+      input.remove();
+      if (!file) return;
+      let parsed;
+      try {
+        parsed = JSON.parse(await file.text());
+      } catch (e) {
+        setStatus("Import failed: not a valid JSON file.");
+        return;
+      }
+      if (!parsed || parsed.type !== "power-pane-settings") {
+        setStatus("Import failed: not a Power Pane settings export.");
+        return;
+      }
+      // Persist imported values, then refresh the working state and UI.
+      const settings = parsed.settings && typeof parsed.settings === "object" ? parsed.settings : {};
+      const theme = parsed.theme === PP.THEME.LIGHT ? PP.THEME.LIGHT : PP.THEME.DARK;
+      const shortcutsImported = parsed.shortcuts && typeof parsed.shortcuts === "object" ? parsed.shortcuts : {};
+      // Keep only known action ids, then append any actions missing from the
+      // file (same completion rule as load()).
+      const importedOrder = Array.isArray(parsed.order) ? parsed.order : [];
+      const knownIds = {};
+      ACTIONS.forEach(function (action) {
+        knownIds[action.id] = true;
+      });
+      const seen = {};
+      order = [];
+      importedOrder.forEach(function (id) {
+        if (typeof id === "string" && actionsById[id] && !seen[id]) {
+          order.push(id);
+          seen[id] = true;
+        }
+      });
+      ACTIONS.forEach(function (action) {
+        if (!seen[action.id]) order.push(action.id);
+      });
+      const snippets = sanitizeSnippets(parsed.snippets);
+      const jsCount = snippets.filter(function (snippet) {
+        return snippet.type === "js";
+      }).length;
+      if (
+        jsCount &&
+        !window.confirm(
+          "The file contains " +
+            jsCount +
+            " JavaScript snippet(s). They run with your privileges in the page when executed. Import anyway?"
+        )
+      ) {
+        setStatus("Import cancelled.");
+        return;
+      }
+
+      const payload = {};
+      payload[PP.SYNC.SETTINGS] = settings;
+      payload[PP.SYNC.THEME] = theme;
+      payload[PP.SYNC.SHORTCUTS] = shortcutsImported;
+      payload[PP.SYNC.ORDER] = order;
+      await syncSet(payload);
+      await localSet(PP.LOCAL.SNIPPETS, snippets);
+
+      visibility = settings;
+      shortcuts = shortcutsImported;
+      themeSelect.value = theme;
+      render();
+      setStatus(
+        "Imported settings (" +
+          Object.keys(settings).length +
+          " actions, " +
+          snippets.length +
+          " snippet(s))."
+      );
+    });
+    document.body.appendChild(input);
+    input.click();
+  });
 
   load();
 })();

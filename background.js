@@ -33,16 +33,16 @@
 
 importScripts("./src/constants.js");
 
-var PP = self.PP;
+const PP = self.PP;
 
 /* --- Rule-id namespacing ------------------------------------------------ */
 
 /** Tab rules live in a high band so they can never clash with a tab id. */
-var TAB_RULE_ID_OFFSET = 1000000;
+const TAB_RULE_ID_OFFSET = 1000000;
 /** Host/SW rules start in a band above the tab band. */
-var HOST_RULE_ID_BAND_BASE = 1001000;
+const HOST_RULE_ID_BAND_BASE = 1001000;
 /** Size of the host/SW band (two ids are consumed per host). */
-var HOST_RULE_ID_BAND_SIZE = 100000;
+const HOST_RULE_ID_BAND_SIZE = 100000;
 
 /**
  * Deterministic rule-id band base for a hostname. Two ids are reserved per
@@ -53,8 +53,8 @@ var HOST_RULE_ID_BAND_SIZE = 100000;
  * @returns {number}
  */
 function hostRuleBase(hostname) {
-  var hash = 0;
-  for (var i = 0; i < hostname.length; i++) {
+  let hash = 0;
+  for (let i = 0; i < hostname.length; i++) {
     hash = (hash * 31 + hostname.charCodeAt(i)) >>> 0;
   }
   return HOST_RULE_ID_BAND_BASE + (hash % HOST_RULE_ID_BAND_SIZE);
