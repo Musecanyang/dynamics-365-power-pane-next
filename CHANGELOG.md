@@ -5,6 +5,26 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+- **User Permissions Save surfaced only "HTTP 400"**: write failures now
+  surface the platform's real OData error message on every Web API call
+  (`webPatch` / `webAssoc` / `webDisassoc` / `webApiGet`), e.g. unknown
+  `0x80041409 - Cannot associate security role because the security role's
+  Business Unit is not the same as the user's Business Unit` instead of a
+  blank status code. (Verified against UAT: the user's role/team
+  assign / disassociate / business-unit flows all pass; the 400 is the
+  documented cross-business-unit role rejection.)
+- **Run Code "Save to Snippets" broke**: the shared snippet type field helper
+  called `this.el`, which loses its `this` binding when consumers destructure
+  the method off `window.PPUtil` - the dialog crashed before rendering.
+  `snippetTypeField` (and `userRow`) now reference `PPUtil.el` explicitly.
+- **New Snippet lost its Type default**: `PPUtil.el` ignored the `value`
+  attribute, so the shared select's options were built without values and
+  `select.value = "js"` silently no-oped. `el()` now applies `value`
+  (`option` / `input` builders rely on it), with unit tests for both.
+
 ## [1.2.0] - 2026-09-22
 
 ### Fixed

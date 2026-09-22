@@ -62,6 +62,7 @@
       const node = document.createElement(tag);
       if (attrs.className) node.className = attrs.className;
       if (attrs.text != null) node.textContent = attrs.text;
+      if (attrs.value != null) node.value = attrs.value;
       if (attrs.title != null) node.title = attrs.title;
       if (attrs.style) node.style.cssText = attrs.style;
       if (attrs.hidden) node.hidden = attrs.hidden;
@@ -90,20 +91,20 @@
      * @returns {HTMLElement}
      */
     userRow: function (user, actions) {
-      const meta = this.el("div", {
+      const meta = PPUtil.el("div", {
         className: "meta",
         children: [
-          this.el("div", {
+          PPUtil.el("div", {
             className: "nm",
             text: user.fullname || "(no name)"
           }),
-          this.el("div", {
+          PPUtil.el("div", {
             className: "em",
             text: user.internalemailaddress || user.domainname || ""
           })
         ]
       });
-      const row = this.el("div", { className: "user", children: [meta] });
+      const row = PPUtil.el("div", { className: "user", children: [meta] });
       (actions || []).forEach(function (action) {
         const button = PPUtil.el("button", {
           className: action.className || "mini",
@@ -150,12 +151,17 @@
      * (content/features/snippets.js) - the two used to hold drifting copies.
      * The caller sets the initial value via `field.select.value` and its own
      * change listener.
+     *
+     * Deliberately calls `PPUtil.el` through the object name instead of
+     * `this.el`: consumers destructure this method off `window.PPUtil`, and a
+     * bare reference loses the `this` binding (that mistake broke the
+     * Run Code "Save to Snippets" dialog once already).
      * @param {{fieldLabel?: string}} [opts] label text, defaults to "Type"
      * @returns {{root: HTMLElement, select: HTMLSelectElement}}
      */
     snippetTypeField: function (opts) {
       opts = opts || {};
-      const select = this.el("select");
+      const select = PPUtil.el("select");
       select.style.alignSelf = "flex-start";
       [
         ["js", "JavaScript"],
@@ -167,7 +173,10 @@
       });
       const field = PPUtil.el("div", {
         className: "field",
-        children: [this.el("label", { text: opts.fieldLabel || "Type" }), select]
+        children: [
+          PPUtil.el("label", { text: opts.fieldLabel || "Type" }),
+          select
+        ]
       });
       return { root: field, select: select };
     },

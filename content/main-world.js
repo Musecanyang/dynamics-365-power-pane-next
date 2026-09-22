@@ -156,13 +156,42 @@
    * ------------------------------------------------------------------ */
 
   /**
+   * Absolute Web API URL for a path relative to /api/data/v<version>/.
+   * @param {string} path
+   * @returns {string}
+   */
+  function apiUrl(path) {
+    return baseUrl() + "/api/data/v" + apiVersion() + "/" + path;
+  }
+
+  /**
+   * Turn a non-2xx Dataverse Web API response into an Error carrying the
+   * platform's real OData message (`{"error": {"code", "message"}}`) instead
+   * of a bare "HTTP 400" - the status alone (e.g. 0x80041409 "security role's
+   * Business Unit is not the same as the user's") left users guessing.
+   * @param {Response} response
+   * @param {string} fallback prefix when the body carries no JSON message
+   * @returns {Promise<never>}
+   */
+  async function throwWebApiError(response, label) {
+    try {
+      const body = await response.text();
+      const parsed = JSON.parse(body);
+      const message = parsed && parsed.error && parsed.error.message;
+      if (message) return new Error((label ? label + ": " : "") + message);
+    } catch (e) {
+      /* not JSON - fall through to the status-only message */
+    }
+    return new Error(label + " HTTP " + response.status + " " + response.statusText);
+  }
+
+  /**
    * GET a Dataverse Web API path and parse the JSON. Throws on non-2xx.
    * @param {string} path - path relative to /api/data/v<version>/
    * @returns {Promise<Object>}
    */
   function webApiGet(path) {
-    const url = baseUrl() + "/api/data/v" + apiVersion() + "/" + path;
-    return fetch(url, {
+    return fetch(apiUrl(path), {
       credentials: "include",
       headers: {
         Accept: "application/json",
@@ -171,7 +200,7 @@
         "Prefer": "odata.include-annotations=*"
       }
     }).then(function (response) {
-      if (!response.ok) throw new Error("Web API " + response.status + " " + response.statusText);
+      if (!response.ok) return throwWebApiError(response, "Web API").then(function (e) { throw e; });
       return response.json();
     });
   }
@@ -209,7 +238,7 @@
 
   /** @param {string} path @param {Object} body @returns {Promise<void>} */
   async function webPatch(path, body) {
-    const url = baseUrl() + "/api/data/v" + apiVersion() + "/" + path;
+    const url = apiUrl(path);
     const response = await fetch(url, {
       method: "PATCH",
       credentials: "include",
@@ -217,7 +246,7 @@
       body: JSON.stringify(body)
     });
     if (!response.ok && response.status !== 204) {
-      throw new Error("HTTP " + response.status + " " + response.statusText);
+      throw await throwWebApiError(response, "Update failed");
     }
   }
 
@@ -242,7 +271,7 @@
       headers: { "Content-Type": "application/json", "OData-MaxVersion": "4.0", "OData-Version": "4.0" },
       body: body
     });
-    if (!response.ok) throw new Error("HTTP " + response.status + " " + response.statusText);
+    if (!response.ok) throw await throwWebApiError(response, "Associate failed");
   }
 
   /**
@@ -266,7 +295,7 @@
       headers: { "OData-MaxVersion": "4.0", "OData-Version": "4.0" }
     });
     if (!response.ok && response.status !== 204) {
-      throw new Error("HTTP " + response.status + " " + response.statusText);
+      throw await throwWebApiError(response, "Disassociate failed");
     }
   }
 

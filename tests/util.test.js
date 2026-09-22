@@ -105,6 +105,31 @@ test("el: builds the node and applies the className / text / title attributes", 
   assert.equal(node.title, "Copy permissions");
 });
 
+test("el: value attr sets .value (select options / inputs rely on it)", () => {
+  const doc = stubDocument();
+  const ui = loadUtil(doc);
+  const option = ui.el("option", { value: "js", text: "JavaScript" });
+  assert.equal(option.value, "js");
+  assert.equal(option.textContent, "JavaScript");
+  const input = ui.el("input", { type: "text", value: "hello" });
+  assert.equal(input.value, "hello");
+});
+
+test("snippetTypeField: options carry values and the field survives destructuring (no this)", () => {
+  const doc = stubDocument();
+  const ui = loadUtil(doc);
+  const field = ui.snippetTypeField();
+  const select = field.select;
+  // Two options shipped with their `value` attributes set.
+  assert.equal(select.children.length, 2);
+  assert.equal(select.children[0].value, "js");
+  assert.equal(select.children[1].value, "fetchxml");
+  const { snippetTypeField } = ui; // destructured bare reference
+  const other = snippetTypeField();
+  assert.ok(other.root.children.length >= 2);
+  assert.equal(other.select.tagName, "select");
+});
+
 test("el: children append in order; strings become text nodes", () => {
   const doc = stubDocument();
   const ui = loadUtil(doc);

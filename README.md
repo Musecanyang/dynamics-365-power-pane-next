@@ -46,8 +46,8 @@ Actions are grouped in the pane exactly as listed here.
 | --- | --- |
 | `User Info` | Current user's name, id and security roles / teams. |
 | `Form Context` | Client URL, entity, record id, **form name/id** and form type (code + meaning). |
-| `Run Code` | Runs JavaScript (with `xrm` in scope) or a FetchXML query through the Organization service and shows the result. |
-| `FetchXML Snippets` | Save, edit, reuse and run named FetchXML / JavaScript snippets. |
+| `Run Code` | A Language selector (**JavaScript** / **FetchXML**) plus a source textarea. Pasted content auto-routes: text starting with an XML tag always executes as FetchXML (even when JavaScript is selected), and pasting an XML query switches the selector automatically. JavaScript runs in the page world with `xrm` in scope (top-level `await` / `return` work); FetchXML executes through the Organization service and renders a results table (formatted values, hover tooltips, click-to-copy first column, Copy JSON); failures show the platform's actual OData error message. The result dialog offers **Save to Snippets**. |
+| `Snippets (FetchXML/JS)` | Snippet library stored in `chrome.storage.local` (device-local): create / edit / delete named snippets with a **Type** field (JavaScript or FetchXML), run them right from the list, and back the library up as JSON (Import merges, skipping exact duplicates). |
 
 ### Impersonation
 | Action | What it does |
@@ -129,7 +129,7 @@ impersonation status).
 | `Environment Info` | Org unique name/id, environment id, geo, version, language, on-premise flag. |
 | `Organization Settings` | Base currency, default country, auto-save, language. |
 | `Client Info` | Client type, theme, version, language, user agent. |
-| `User Permissions (view/edit)` | Search a user and view/edit **Business Unit, Roles and Teams** inline. Changes are staged and applied on Save. |
+| `User Permissions (view/edit)` | Search a user and view/edit **Business Unit, Roles and Teams** inline. Changes are staged and applied on Save. The role picker lists the roles **of the user's own business unit** (Dataverse refuses cross-business-unit role assignments with HTTP 400) and every write failure surfaces the platform's real error message, not just the status code. |
 | `Role Check` | Batch lookup: one or many names/emails → a table of Name, Email, Business Unit, Roles, Teams (copy/CSV export). |
 
 ---
