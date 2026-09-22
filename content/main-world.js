@@ -223,9 +223,17 @@
       try {
         const response = await fetch(next, {
           credentials: "include",
-          headers: { Accept: "application/json", "OData-MaxVersion": "4.0", "OData-Version": "4.0" }
+          headers: {
+            Accept: "application/json",
+            "OData-MaxVersion": "4.0",
+            "OData-Version": "4.0",
+            "Prefer": "odata.include-annotations=*"
+          }
         });
-        if (!response.ok) break;
+        if (!response.ok) {
+          debugLog("bridge.webApiGetAllPage", new Error("HTTP " + response.status + " " + response.statusText));
+          break;
+        }
         data = await response.json();
         out = out.concat(data.value || []);
         next = data["@odata.nextLink"];

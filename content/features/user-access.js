@@ -285,8 +285,13 @@
 
           const roleSourceMap = {};
           allRoles
+            // Strictly the user's CURRENT business unit: the platform refuses
+            // cross-BU role associations outright (HTTP 400 / 0x80041409),
+            // so an unknown-buId role is treated as not offered, and there is
+            // no "no BU known" permissive mode - the Change BU flow is the
+            // only way another BU's roles become pickable.
             .filter(function (role) {
-              return !currentBusinessUnit || !role.buId || String(role.buId).toLowerCase() === currentBusinessUnit;
+              return !!role.buId && String(role.buId).toLowerCase() === currentBusinessUnit;
             })
             .forEach(function (role) {
               roleSourceMap[role.id.toLowerCase()] = role;
