@@ -5,6 +5,20 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.0] - 2026-09-23
+
+### Changed
+- **UI factory consolidation**: every `document.createElement` construction
+  site in the panel code migrated to `PPUtil.el(tag, attrs, children)` -
+  content/core.js (75), features/user-access.js (52), features/snippets.js
+  (26), features/impersonation.js (16), options/options.js (8). `PPUtil.el`
+  gained `type / placeholder / disabled / checked / name / src / href /
+  htmlFor` attributes (unit-tested). Two deliberate survivors: the internal
+  `shared/util.js` usages (el() itself + downloadTextFile) and the single
+  MAIN-world site in `content/commands/forms.js` (the MAIN world cannot load
+  shared/util.js; it carries an explanatory comment). DOM order, listeners
+  and text content unchanged; `npm run ci` green (30 tests).
+
 ## [1.2.1] - 2026-09-22
 
 ### Fixed
@@ -219,7 +233,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Initial public version: in-page Shadow-DOM pane with General, Record, Form,
   Navigation, Debug and Admin actions, plus real user impersonation.
 
-[Unreleased]: https://github.com/Musecanyang/dynamics-365-power-pane-next/compare/v1.2.1...HEAD
+[Unreleased]: https://github.com/Musecanyang/dynamics-365-power-pane-next/compare/v1.3.0...HEAD
+[1.3.0]: https://github.com/Musecanyang/dynamics-365-power-pane-next/compare/v1.2.1...v1.3.0
 [1.2.1]: https://github.com/Musecanyang/dynamics-365-power-pane-next/compare/v1.2.0...v1.2.1
 [1.2.0]: https://github.com/Musecanyang/dynamics-365-power-pane-next/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/Musecanyang/dynamics-365-power-pane-next/releases/tag/v1.1.0

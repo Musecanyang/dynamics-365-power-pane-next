@@ -14,6 +14,7 @@
   "use strict";
   const PP = window.PP;
   const PPUtil = window.PPUtil;
+  const el = window.PPUtil.el;
   const downloadTextFile = PPUtil.downloadTextFile;
   const {
     state,
@@ -30,82 +31,77 @@
     openModal(function (box, close) {
       function render() {
         box.textContent = "";
-        const heading = document.createElement("h3");
-        heading.textContent = "Snippets (FetchXML/JS)";
-        box.appendChild(heading);
-        const description = document.createElement("p");
-        description.className = "desc";
-        description.textContent = "Save and reuse FetchXML queries and JavaScript snippets.";
-        box.appendChild(description);
-        const storageNote = document.createElement("p");
-        storageNote.className = "desc";
-        storageNote.title = "chrome.storage.local (key: " + PP.LOCAL.SNIPPETS + ")";
-        storageNote.textContent = "Stored in this browser only (chrome.storage.local) - snippets are not synced across devices.";
-        box.appendChild(storageNote);
+        box.appendChild(el("h3", { text: "Snippets (FetchXML/JS)" }));
+        box.appendChild(el("p", {
+          className: "desc",
+          text: "Save and reuse FetchXML queries and JavaScript snippets."
+        }));
+        box.appendChild(el("p", {
+          className: "desc",
+          title: "chrome.storage.local (key: " + PP.LOCAL.SNIPPETS + ")",
+          text: "Stored in this browser only (chrome.storage.local) - snippets are not synced across devices."
+        }));
 
         if (!state.snippets.length) {
-          const empty = document.createElement("div");
-          empty.className = "empty";
-          empty.textContent = "No snippets yet.";
-          box.appendChild(empty);
+          box.appendChild(el("div", { className: "empty", text: "No snippets yet." }));
         }
 
         state.snippets.forEach(function (snippet, index) {
-          const row = document.createElement("div");
-          row.className = "srow";
-          const name = document.createElement("span");
-          name.className = "nm";
-          name.textContent = snippet.name;
-          row.appendChild(name);
-          const typeTag = document.createElement("span");
-          typeTag.className = "mini";
+          const row = el("div", { className: "srow" });
+          row.appendChild(el("span", { className: "nm", text: snippet.name }));
+          const typeTag = el("span", {
+            className: "mini",
+            text: snippet.type === "js" ? "JS" : "XML"
+          });
           typeTag.style.opacity = ".6";
           typeTag.style.flex = "none";
-          typeTag.textContent = snippet.type === "js" ? "JS" : "XML";
           row.appendChild(typeTag);
 
-          const runButton = document.createElement("button");
-          runButton.className = "mini";
-          runButton.textContent = "Run";
-          runButton.addEventListener("click", function () {
-            // Keep the dialog open with a running state until the result
-            // dialog is ready to show.
-            runButton.classList.add("running");
-            runButton.textContent = "Running...";
-            runButton.disabled = true;
-            // The snippet is already saved, so its result dialog offers no
-            // "Save to Snippets" button for either type.
-            const request =
-              snippet.type === "js"
-                ? send("runScript", { code: snippet.xml })
-                : send("executeFetchXml", { xml: snippet.xml, mode: "fetchxml" });
-            const resultOptions = { pinned: true };
-            request
-              .then(function (result) {
-                close();
-                if (result && result.output) showOutput(result.output, resultOptions);
-                if (result && result.table) showTable(result.table, resultOptions);
-                if (result && result.message) toast(result.message, result.level);
-              })
-              .catch(function (err) {
-                runButton.classList.remove("running");
-                runButton.textContent = "Run";
-                runButton.disabled = false;
-                toast(err.message, "error");
-              });
+          const runButton = el("button", {
+            className: "mini",
+            text: "Run",
+            onClick: function () {
+              // Keep the dialog open with a running state until the result
+              // dialog is ready to show.
+              runButton.classList.add("running");
+              runButton.textContent = "Running...";
+              runButton.disabled = true;
+              // The snippet is already saved, so its result dialog offers no
+              // "Save to Snippets" button for either type.
+              const request =
+                snippet.type === "js"
+                  ? send("runScript", { code: snippet.xml })
+                  : send("executeFetchXml", { xml: snippet.xml, mode: "fetchxml" });
+              const resultOptions = { pinned: true };
+              request
+                .then(function (result) {
+                  close();
+                  if (result && result.output) showOutput(result.output, resultOptions);
+                  if (result && result.table) showTable(result.table, resultOptions);
+                  if (result && result.message) toast(result.message, result.level);
+                })
+                .catch(function (err) {
+                  runButton.classList.remove("running");
+                  runButton.textContent = "Run";
+                  runButton.disabled = false;
+                  toast(err.message, "error");
+                });
+            }
           });
-          const editButton = document.createElement("button");
-          editButton.className = "mini";
-          editButton.textContent = "Edit";
-          editButton.addEventListener("click", function () {
-            form(snippet, index);
+          const editButton = el("button", {
+            className: "mini",
+            text: "Edit",
+            onClick: function () {
+              form(snippet, index);
+            }
           });
-          const deleteButton = document.createElement("button");
-          deleteButton.className = "mini";
-          deleteButton.textContent = "Del";
-          deleteButton.addEventListener("click", function () {
-            state.snippets.splice(index, 1);
-            localSet(PP.LOCAL.SNIPPETS, state.snippets).then(render);
+          const deleteButton = el("button", {
+            className: "mini",
+            text: "Del",
+            onClick: function () {
+              state.snippets.splice(index, 1);
+              localSet(PP.LOCAL.SNIPPETS, state.snippets).then(render);
+            }
           });
 
           row.appendChild(runButton);
@@ -114,36 +110,23 @@
           box.appendChild(row);
         });
 
-        const foot = document.createElement("div");
-        foot.className = "foot";
-        const importButton = document.createElement("button");
-        importButton.className = "mini";
-        importButton.textContent = "Import";
-        importButton.addEventListener("click", pickSnippetFile);
-        const exportButton = document.createElement("button");
-        exportButton.className = "mini";
-        exportButton.textContent = "Export";
-        exportButton.addEventListener("click", exportSnippets);
-        const addButton = document.createElement("button");
-        addButton.className = "primary";
-        addButton.textContent = "New";
-        addButton.addEventListener("click", function () {
-          form(null, -1);
-        });
-        const closeButton = document.createElement("button");
-        closeButton.textContent = "Close";
-        closeButton.addEventListener("click", close);
-        foot.appendChild(importButton);
-        foot.appendChild(exportButton);
-        foot.appendChild(addButton);
-        foot.appendChild(closeButton);
+        const foot = el("div", { className: "foot" });
+        foot.appendChild(el("button", { className: "mini", text: "Import", onClick: pickSnippetFile }));
+        foot.appendChild(el("button", { className: "mini", text: "Export", onClick: exportSnippets }));
+        foot.appendChild(el("button", {
+          className: "primary",
+          text: "New",
+          onClick: function () {
+            form(null, -1);
+          }
+        }));
+        foot.appendChild(el("button", { text: "Close", onClick: close }));
         box.appendChild(foot);
       }
 
       /** Open a JSON file picker and merge valid snippets from it. */
       function pickSnippetFile() {
-        const input = document.createElement("input");
-        input.type = "file";
+        const input = el("input", { type: "file" });
         input.accept = ".json,application/json";
         input.style.display = "none";
         input.addEventListener("change", function () {
@@ -242,31 +225,22 @@
 
       function form(snippet, index) {
         box.textContent = "";
-        const heading = document.createElement("h3");
-        heading.textContent = index >= 0 ? "Edit Snippet" : "New Snippet";
-        box.appendChild(heading);
+        box.appendChild(el("h3", { text: index >= 0 ? "Edit Snippet" : "New Snippet" }));
 
         const typeField = PPUtil.snippetTypeField();
         typeField.select.value = snippet ? (snippet.type === "fetchxml" ? "fetchxml" : "js") : "js";
         box.appendChild(typeField.root);
         const typeSelect = typeField.select;
 
-        const nameField = document.createElement("div");
-        nameField.className = "field";
-        const nameLabel = document.createElement("label");
-        nameLabel.textContent = "Name";
-        const nameInput = document.createElement("input");
-        nameInput.type = "text";
-        nameInput.value = snippet ? snippet.name : "";
-        nameField.appendChild(nameLabel);
+        const nameField = el("div", { className: "field" });
+        const nameInput = el("input", { type: "text", value: snippet ? snippet.name : "" });
+        nameField.appendChild(el("label", { text: "Name" }));
         nameField.appendChild(nameInput);
         box.appendChild(nameField);
 
-        const xmlField = document.createElement("div");
-        xmlField.className = "field";
-        const xmlLabel = document.createElement("label");
-        xmlLabel.textContent = "Source";
-        const xmlArea = document.createElement("textarea");
+        const xmlField = el("div", { className: "field" });
+        const xmlLabel = el("label", { text: "Source" });
+        const xmlArea = el("textarea");
         const placeholders = {
           fetchxml: "<fetch>...</fetch>",
           js: "// JavaScript runs in the page world.\n// Use `return` to produce output. `xrm` is in scope."
@@ -282,23 +256,19 @@
         xmlField.appendChild(xmlArea);
         box.appendChild(xmlField);
 
-        const foot = document.createElement("div");
-        foot.className = "foot";
-        const backButton = document.createElement("button");
-        backButton.textContent = "Back";
-        backButton.addEventListener("click", render);
-        const saveButton = document.createElement("button");
-        saveButton.className = "primary";
-        saveButton.textContent = "Save";
-        saveButton.addEventListener("click", function () {
-          const name = nameInput.value.trim() || "Untitled";
-          const body = { name: name, xml: xmlArea.value, type: typeSelect.value };
-          if (index >= 0) state.snippets[index] = body;
-          else state.snippets.push(body);
-          localSet(PP.LOCAL.SNIPPETS, state.snippets).then(render);
-        });
-        foot.appendChild(backButton);
-        foot.appendChild(saveButton);
+        const foot = el("div", { className: "foot" });
+        foot.appendChild(el("button", { text: "Back", onClick: render }));
+        foot.appendChild(el("button", {
+          className: "primary",
+          text: "Save",
+          onClick: function () {
+            const name = nameInput.value.trim() || "Untitled";
+            const body = { name: name, xml: xmlArea.value, type: typeSelect.value };
+            if (index >= 0) state.snippets[index] = body;
+            else state.snippets.push(body);
+            localSet(PP.LOCAL.SNIPPETS, state.snippets).then(render);
+          }
+        }));
         box.appendChild(foot);
         nameInput.focus();
       }

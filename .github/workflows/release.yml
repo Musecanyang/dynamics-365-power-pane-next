@@ -58,11 +58,49 @@ jobs:
           console.log("Prepared notes for " + version + " (" + notes.split("\n").length + " lines)");
           NODE
 
+      - name: Package the extension
+        # The GitHub Release gets a zip with ONLY the files the browser needs
+        # (the automatically attached "Source code (zip)" also carries the
+        # repo tooling: tests / scripts / workflows / docs, which users should
+        # never have to unpack to run the extension).
+        run: |
+          node <<'NODE'
+          const fs = require("fs");
+          const path = require("path");
+
+          const EXTENSION_ROOTS = ["shared", "content", "options", "icons"];
+          const files = [
+            "manifest.json",
+            "background.js",
+            "LICENSE",
+            "README.md"
+          ];
+
+          function walk(dir) {
+            let out = [];
+            for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+              const full = path.join(dir, entry.name);
+              if (entry.isDirectory()) out = out.concat(walk(full));
+              else files.push(full);
+            }
+            return out;
+          }
+          EXTENSION_ROOTS.forEach(walk);
+          files.forEach(function (f) {
+            if (!fs.existsSync(f)) throw new Error("Missing release file: " + f);
+          });
+          fs.writeFileSync("files.txt", files.join("\n") + "\n");
+          console.log("Packaging " + files.length + " files");
+          NODE
+          zip -q "power-pane-next-${GITHUB_REF_NAME}.zip" -@ < files.txt
+          unzip -l "power-pane-next-${GITHUB_REF_NAME}.zip"
+
       - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release create "$GITHUB_REF_NAME" \
+            "power-pane-next-${GITHUB_REF_NAME}.zip" \
             --title "$GITHUB_REF_NAME" \
             --notes-file release-notes.md \
             --verify-tag

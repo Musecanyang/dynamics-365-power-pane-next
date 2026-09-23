@@ -8,10 +8,10 @@
  * the codebase's existing conventions.
  *
  * File environments:
- *   - content/ + src/     browser page world (`window`, `chrome`; MAIN world
+ *   - content/ + shared/  browser page world (`window`, `chrome`; MAIN world
  *                         also touches the page globals Xrm / Mscrm)
  *   - background.js       service worker (importScripts / self, no DOM)
- *   - scripts/ + tests/   plain Node (CommonJS) tooling
+ *   - tests/              plain Node (CommonJS tooling; the guardrails live here too)
  */
 import globals from "globals";
 
@@ -49,7 +49,7 @@ export default [
   },
   {
     // Extension runtime sources: browser page context + chrome.* APIs.
-    files: ["content/**/*.js", "src/**/*.js"],
+    files: ["content/**/*.js", "shared/**/*.js"],
     languageOptions: {
       ecmaVersion: 2022,
       sourceType: "script",
@@ -73,8 +73,8 @@ export default [
     rules: RULES
   },
   {
-    // Node tooling and tests use CommonJS (require / process / node:test).
-    files: ["scripts/**/*.js", "tests/**/*.js"],
+    // Node tests use CommonJS (require / process / node:test).
+    files: ["tests/**/*.js"],
     languageOptions: {
       ecmaVersion: 2022,
       sourceType: "commonjs",

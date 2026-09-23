@@ -1,9 +1,9 @@
 name: CI
 
-# Static guardrails for the extension sources: Node parse check and manifest
-# JSON verification, the constants <-> MAIN-world bridge marker assertion,
-# ESLint and unit tests. Loading the extension in a browser remains the final
-# acceptance step for behaviour.
+# Quality gate for the extension sources: ESLint plus the unit tests, which
+# include the guardrails (parse every shipped script, validate the manifest
+# JSON, assert the constants <-> MAIN-world bridge marker sync). Loading the
+# extension in a browser remains the final acceptance step for behaviour.
 
 on:
   push:
@@ -24,11 +24,8 @@ jobs:
       - name: Install tooling
         run: npm ci
 
-      - name: Syntax check all shipped scripts
-        run: npm run check
-
       - name: Lint
         run: npm run lint
 
-      - name: Unit tests
+      - name: Unit tests (includes parse + manifest + bridge-marker guardrails)
         run: npm test

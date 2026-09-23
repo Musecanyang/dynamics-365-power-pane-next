@@ -36,6 +36,8 @@
   const debugLog = window.PPUtil.debugLog;
   const downloadTextFile = window.PPUtil.downloadTextFile;
   const snippetTypeField = window.PPUtil.snippetTypeField;
+  /* Shared DOM factory (shared/util.js). */
+  const el = window.PPUtil.el;
 
   /* --- Tunables (named to avoid magic numbers) -------------------------- */
   const BRIDGE_TIMEOUT_MS = 30000;
@@ -241,9 +243,7 @@
   }
 
   function legacyCopy(text) {
-    const textarea = document.createElement("textarea");
-    textarea.value = text;
-    textarea.style.cssText = "position:fixed;top:-9999px;left:-9999px";
+    const textarea = el("textarea", { value: text, style: "position:fixed;top:-9999px;left:-9999px" });
     document.body.appendChild(textarea);
     textarea.select();
     try {
@@ -397,15 +397,13 @@
     ".pp .ft a svg{width:12px;height:12px;fill:currentColor}"
   ].join("");
 
-  const host = document.createElement("div");
+  const host = el("div");
   host.id = "pp-host";
   const root = host.attachShadow({ mode: "open" });
-  const style = document.createElement("style");
-  style.textContent = CSS;
+  const style = el("style", { text: CSS });
   root.appendChild(style);
 
-  const wrap = document.createElement("div");
-  wrap.className = "pp";
+  const wrap = el("div", { className: "pp" });
   root.appendChild(wrap);
 
   const bolt =
@@ -415,13 +413,13 @@
   const githubMark =
     '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8z"/></svg>';
 
-  const toggleBtn = document.createElement("button");
-  toggleBtn.className = "btn";
-  toggleBtn.title = PP.SHORT_NAME + " (Alt+P)";
+  const toggleBtn = el("button", {
+    className: "btn",
+    title: PP.SHORT_NAME + " (Alt+P)"
+  });
   toggleBtn.innerHTML = bolt;
 
-  const panel = document.createElement("div");
-  panel.className = "panel hidden";
+  const panel = el("div", { className: "panel hidden" });
   panel.innerHTML =
     '<div class="hd"><b>' + PP.SHORT_NAME + '</b><span class="imp-pill" hidden></span><span class="sp"></span>' +
     '<button data-act="theme" title="Toggle theme">&#9788;</button>' +
@@ -436,7 +434,7 @@
     "GitHub</a>" +
     "</div>";
 
-  const toastLayer = document.createElement("div");
+  const toastLayer = el("div");
 
   wrap.appendChild(toggleBtn);
   wrap.appendChild(panel);
@@ -475,10 +473,7 @@
     itemButtons = [];
     activeIndex = -1;
     if (!actions.length) {
-      const empty = document.createElement("div");
-      empty.className = "empty";
-      empty.textContent = "No matching actions.";
-      listEl.appendChild(empty);
+      listEl.appendChild(el("div", { className: "empty", text: "No matching actions." }));
       return;
     }
 
@@ -508,22 +503,17 @@
     });
 
     groups.forEach(function (group) {
-      const block = document.createElement("div");
-      block.className = "grp";
-      const heading = document.createElement("h4");
-      heading.textContent = group.name;
+      const block = el("div", { className: "grp" });
+      const heading = el("h4", { text: group.name });
       heading.style.color = groupColor(group.name);
       block.appendChild(heading);
 
       group.items.forEach(function (action) {
-        const button = document.createElement("button");
-        button.className = "item";
+        const button = el("button", { className: "item" });
 
-        const dot = document.createElement("span");
-        dot.className = "dot";
+        const dot = el("span", { className: "dot" });
         dot.style.background = groupColor(group.name);
-        const label = document.createElement("span");
-        label.textContent = action.label;
+        const label = el("span", { text: action.label });
         button.appendChild(dot);
         button.appendChild(label);
 
@@ -617,9 +607,10 @@
   function toast(message, level) {
     const existing = toastLayer.querySelector(".toast");
     if (existing) existing.remove();
-    const node = document.createElement("div");
-    node.className = "toast " + (level || "info");
-    node.textContent = message;
+    const node = el("div", {
+      className: "toast " + (level || "info"),
+      text: message
+    });
     toastLayer.appendChild(node);
     setTimeout(function () {
       node.remove();
@@ -639,30 +630,22 @@
    */
   function openModal(buildBody, opts) {
     opts = opts || {};
-    const modal = document.createElement("div");
-    modal.className = "modal";
-    const box = document.createElement("div");
-    box.className =
-      "box" +
-      (opts.wide ? " wide" : "") +
-      (opts.fixedWidth ? " fixedw" : "");
+    const modal = el("div", { className: "modal" });
+    const box = el("div", {
+      className:
+        "box" +
+        (opts.wide ? " wide" : "") +
+        (opts.fixedWidth ? " fixedw" : "")
+    });
     modal.appendChild(box);
 
-    const controls = document.createElement("div");
-    controls.className = "modalctl";
-    const pinButton = document.createElement("button");
-    pinButton.type = "button";
-    pinButton.title = "Pin: keep open when clicking outside";
-    pinButton.textContent = "Pin";
-    const popButton = document.createElement("button");
-    popButton.type = "button";
-    popButton.title = "Pop out: float over the page without blocking it";
-    popButton.textContent = "Pop";
+    const controls = el("div", { className: "modalctl" });
+    const pinButton = el("button", { type: "button", title: "Pin: keep open when clicking outside", text: "Pin" });
+    const popButton = el("button", { type: "button", title: "Pop out: float over the page without blocking it", text: "Pop" });
     controls.appendChild(pinButton);
     controls.appendChild(popButton);
 
-    const content = document.createElement("div");
-    content.className = "modal-content";
+    const content = el("div", { className: "modal-content" });
     // The controls live inside the content flow (sticky, right-aligned) so
     // they follow wide dialogs horizontally instead of staying put while the
     // table scrolls under them.
@@ -751,23 +734,20 @@
    * @returns {{bar: HTMLElement, buttons: HTMLElement}}
    */
   function buildActionBar(spec) {
-    const bar = document.createElement("div");
-    bar.className = "actions";
+    const bar = el("div", { className: "actions" });
     if (spec.count) {
-      const count = document.createElement("span");
-      count.className = "muted";
-      count.textContent = spec.count;
-      bar.appendChild(count);
+      bar.appendChild(el("span", { className: "muted", text: spec.count }));
     }
-    const buttons = document.createElement("div");
-    buttons.className = "actions-buttons";
+    const buttons = el("div", { className: "actions-buttons" });
     (spec.buttons || []).forEach(function (button) {
-      const el = document.createElement("button");
-      if (button.className) el.className = button.className;
-      el.textContent = button.label;
-      if (button.title) el.title = button.title;
-      el.addEventListener("click", button.onClick);
-      buttons.appendChild(el);
+      buttons.appendChild(
+        el("button", {
+          className: button.className,
+          text: button.label,
+          title: button.title || undefined,
+          onClick: button.onClick
+        })
+      );
     });
     bar.appendChild(buttons);
     return { bar: bar, buttons: buttons };
@@ -775,22 +755,17 @@
 
   /** Render a value as a chip list / <pre> / plain text node. */
   function valueNode(value) {
-    const container = document.createElement("div");
-    container.className = "v";
+    const container = el("div", { className: "v" });
     if (Array.isArray(value)) {
       if (!value.length) {
         container.textContent = "(none)";
       } else {
         value.forEach(function (item) {
-          const chip = document.createElement("span");
-          chip.className = "chip";
-          chip.textContent = item;
-          container.appendChild(chip);
+          container.appendChild(el("span", { className: "chip", text: item }));
         });
       }
     } else if (typeof value === "string" && value.length > LONG_VALUE_THRESHOLD) {
-      const pre = document.createElement("pre");
-      pre.textContent = value;
+      const pre = el("pre", { text: value });
       container.appendChild(pre);
     } else {
       container.textContent = value == null ? "" : String(value);
@@ -800,13 +775,14 @@
 
   /** A small "copy" affordance bound to a value. */
   function copyBtn(text) {
-    const button = document.createElement("span");
-    button.className = "cp";
-    button.textContent = "copy";
-    button.addEventListener("click", function () {
-      copyText(String(text)).then(function () {
-        toast("Copied to clipboard.", "success");
-      });
+    const button = el("span", {
+      className: "cp",
+      text: "copy",
+      onClick: function () {
+        copyText(String(text)).then(function () {
+          toast("Copied to clipboard.", "success");
+        });
+      }
     });
     return button;
   }
@@ -821,13 +797,10 @@
   function showOutput(output, opts) {
     opts = opts || {};
     openModal(function (box, close) {
-      const heading = document.createElement("h3");
-      heading.textContent = output.title || "Result";
+      const heading = el("h3", { text: output.title || "Result" });
       box.appendChild(heading);
       if (output.description) {
-        const description = document.createElement("p");
-        description.className = "desc";
-        description.textContent = output.description;
+        const description = el("p", { className: "desc", text: output.description });
         box.appendChild(description);
       }
       // Optional top action bar (kept above the content like the table
@@ -852,10 +825,8 @@
         box.appendChild(action.bar);
       }
       (output.items || []).forEach(function (item) {
-        const row = document.createElement("div");
-        row.className = "out";
-        const key = document.createElement("div");
-        key.className = "k";
+        const row = el("div", { className: "out" });
+        const key = el("div", { className: "k" });
         key.appendChild(document.createTextNode(item.label));
         if (!Array.isArray(item.value) && typeof item.value !== "object") {
           key.appendChild(copyBtn(item.value == null ? "" : item.value));
@@ -867,11 +838,8 @@
       // Without a top action bar fall back to the classic bottom Close
       // button.
       if (!(opts.source && opts.source.xml)) {
-        const foot = document.createElement("div");
-        foot.className = "foot";
-        const closeButton = document.createElement("button");
-        closeButton.className = "primary";
-        closeButton.textContent = "Close";
+        const foot = el("div", { className: "foot" });
+        const closeButton = el("button", { className: "primary", text: "Close" });
         closeButton.addEventListener("click", close);
         foot.appendChild(closeButton);
         box.appendChild(foot);
@@ -887,37 +855,29 @@
    */
   function saveSnippetDialog(source, closeResult) {
     openModal(function (box, close) {
-      const heading = document.createElement("h3");
-      heading.textContent = "Save to Snippets";
+      const heading = el("h3", { text: "Save to Snippets" });
       box.appendChild(heading);
-      const description = document.createElement("p");
-      description.className = "desc";
-      description.textContent = "Saved in this browser only (chrome.storage.local).";
+      const description = el("p", {
+        className: "desc",
+        text: "Saved in this browser only (chrome.storage.local)."
+      });
       box.appendChild(description);
 
       const typeField = snippetTypeField();
       typeField.select.value = source.type === "js" ? "js" : "fetchxml";
       box.appendChild(typeField.root);
 
-      const nameField = document.createElement("div");
-      nameField.className = "field";
-      const nameLabel = document.createElement("label");
-      nameLabel.textContent = "Name";
-      const nameInput = document.createElement("input");
-      nameInput.type = "text";
-      nameInput.placeholder = "Snippet name";
+      const nameField = el("div", { className: "field" });
+      const nameLabel = el("label", { text: "Name" });
+      const nameInput = el("input", { type: "text", placeholder: "Snippet name" });
       nameField.appendChild(nameLabel);
       nameField.appendChild(nameInput);
       box.appendChild(nameField);
 
-      const foot = document.createElement("div");
-      foot.className = "foot";
-      const cancelButton = document.createElement("button");
-      cancelButton.textContent = "Cancel";
+      const foot = el("div", { className: "foot" });
+      const cancelButton = el("button", { text: "Cancel" });
       cancelButton.addEventListener("click", close);
-      const saveButton = document.createElement("button");
-      saveButton.className = "primary";
-      saveButton.textContent = "Save";
+      const saveButton = el("button", { className: "primary", text: "Save" });
       saveButton.addEventListener("click", function () {
         const name = nameInput.value.trim() || "Untitled";
         state.snippets.push({ name: name, xml: source.xml, type: typeField.select.value });
@@ -945,43 +905,37 @@
     opts = opts || {};
     openModal(
       function (box, close) {
-        const heading = document.createElement("h3");
-        heading.textContent = table.title || "Result";
+        const heading = el("h3", { text: table.title || "Result" });
         box.appendChild(heading);
         if (table.description) {
-          const description = document.createElement("p");
-          description.className = "desc";
-          description.textContent = table.description;
+          const description = el("p", { className: "desc", text: table.description });
           box.appendChild(description);
         }
 
         let filter = null;
         if (table.searchable) {
-          filter = document.createElement("input");
-          filter.className = "filter";
-          filter.placeholder = "Filter...";
+          filter = el("input", { className: "filter", placeholder: "Filter..." });
           box.appendChild(filter);
         }
 
-        const tbl = document.createElement("table");
+        const tbl = el("table");
         const hasUrl = (table.rows || []).some(function (row) {
           return row.url;
         });
 
-        const thead = document.createElement("thead");
-        const headRow = document.createElement("tr");
+        const thead = el("thead");
+        const headRow = el("tr");
         (table.columns || []).forEach(function (column) {
-          const th = document.createElement("th");
-          th.textContent = column.label;
+          const th = el("th", { text: column.label });
           headRow.appendChild(th);
         });
         if (hasUrl) {
-          headRow.appendChild(document.createElement("th"));
+          headRow.appendChild(el("th"));
         }
         thead.appendChild(headRow);
         tbl.appendChild(thead);
 
-        const tbody = document.createElement("tbody");
+        const tbody = el("tbody");
         tbl.appendChild(tbody);
 
         function renderRows() {
@@ -1003,25 +957,21 @@
               const groupValue = row[table.groupBy];
               if (groupValue !== lastGroup) {
                 lastGroup = groupValue;
-                const groupRow = document.createElement("tr");
-                const groupCell = document.createElement("td");
-                groupCell.className = "grouphead";
+                const groupRow = el("tr");
+                const groupCell = el("td", { className: "grouphead", text: groupValue });
                 groupCell.colSpan = (table.columns || []).length + (hasUrl ? 1 : 0);
-                groupCell.textContent = groupValue;
                 groupRow.appendChild(groupCell);
                 tbody.appendChild(groupRow);
               }
             }
 
-            const tr = document.createElement("tr");
+            const tr = el("tr");
             (table.columns || []).forEach(function (column) {
-              const td = document.createElement("td");
-              td.className = "col-" + column.key;
+              const td = el("td", { className: "col-" + column.key });
               // The text lives in a span so a column can cap its own width.
               // `max-width` on the `td` itself is unreliable with
               // `table-layout:auto`, whereas the inline-block span honours it.
-              const cell = document.createElement("span");
-              cell.className = "cell";
+              const cell = el("span", { className: "cell" });
               const cellText = row[column.key] == null ? "" : String(row[column.key]);
               cell.textContent = cellText;
               // A per-column `maxWidthPx` stops one long identifier or value
@@ -1046,11 +996,9 @@
             });
 
             if (hasUrl) {
-              const urlCell = document.createElement("td");
+              const urlCell = el("td");
               if (row.url) {
-                const openButton = document.createElement("button");
-                openButton.className = "mini";
-                openButton.textContent = "Open";
+                const openButton = el("button", { className: "mini", text: "Open" });
                 openButton.addEventListener("click", function () {
                   send("openUrl", { url: row.url }).catch(function (err) {
                     toast(err.message, "error");
@@ -1201,34 +1149,26 @@
     // capturing the modal element here is safe (and gives us programmatic
     // pin control for the running state).
     const modalRef = openModal(function (box, close) {
-      const heading = document.createElement("h3");
-      heading.textContent = action.label;
+      const heading = el("h3", { text: action.label });
       box.appendChild(heading);
-      const description = document.createElement("p");
-      description.className = "desc";
-      description.textContent = "Fill the inputs and run.";
+      const description = el("p", { className: "desc", text: "Fill the inputs and run." });
       box.appendChild(description);
 
       const inputs = [];
       (action.inputs || []).forEach(function (spec) {
-        const field = document.createElement("div");
-        field.className = "field";
-        const label = document.createElement("label");
-        label.textContent = spec.label;
+        const field = el("div", { className: "field" });
+        const label = el("label", { text: spec.label });
         field.appendChild(label);
         const input =
           spec.type === "textarea"
-            ? document.createElement("textarea")
+            ? el("textarea")
             : spec.type === "select"
-            ? document.createElement("select")
-            : document.createElement("input");
+            ? el("select")
+            : el("input");
         if (spec.type === "input" || !spec.type) input.type = "text";
         if (spec.type === "select" && Array.isArray(spec.options)) {
           spec.options.forEach(function (pair) {
-            const option = document.createElement("option");
-            option.value = pair[0];
-            option.textContent = pair[1];
-            input.appendChild(option);
+            input.appendChild(el("option", { value: pair[0], text: pair[1] }));
           });
         }
         if (spec.placeholder) input.placeholder = spec.placeholder;
@@ -1237,8 +1177,7 @@
 
         if (spec.entity) {
           input.setAttribute("autocomplete", "off");
-          const results = document.createElement("div");
-          results.className = "entity-results";
+          const results = el("div", { className: "entity-results" });
           field.appendChild(results);
           let debounceTimer = null;
           input.addEventListener("input", function () {
@@ -1253,15 +1192,9 @@
                 .then(function (response) {
                   results.textContent = "";
                   ((response && response.entities) || []).forEach(function (entity) {
-                    const option = document.createElement("button");
-                    option.type = "button";
-                    option.className = "entity-opt";
-                    const logicalName = document.createElement("span");
-                    logicalName.className = "lname";
-                    logicalName.textContent = entity.logical;
-                    const displayName = document.createElement("span");
-                    displayName.className = "dname";
-                    displayName.textContent = entity.display;
+                    const option = el("button", { type: "button", className: "entity-opt" });
+                    const logicalName = el("span", { className: "lname", text: entity.logical });
+                    const displayName = el("span", { className: "dname", text: entity.display });
                     option.appendChild(logicalName);
                     option.appendChild(displayName);
                     option.addEventListener("click", function () {
@@ -1313,14 +1246,10 @@
         });
       }
 
-      const foot = document.createElement("div");
-      foot.className = "foot";
-      const cancel = document.createElement("button");
-      cancel.textContent = "Cancel";
+      const foot = el("div", { className: "foot" });
+      const cancel = el("button", { text: "Cancel" });
       cancel.addEventListener("click", close);
-      const runButton = document.createElement("button");
-      runButton.className = "primary";
-      runButton.textContent = "Run";
+      const runButton = el("button", { className: "primary", text: "Run" });
       runButton.addEventListener("click", function () {
         const args = {};
         inputs.forEach(function (field) {
@@ -1690,7 +1619,7 @@
 
   function ensurePageStyle() {
     if (document.getElementById("pp-inline-style")) return;
-    const styleEl = document.createElement("style");
+    const styleEl = el("style");
     styleEl.id = "pp-inline-style";
     styleEl.textContent =
       ".pp-inline-btn{float:left;display:flex;align-items:center;justify-content:center;width:44px;border:none;background:transparent;cursor:pointer;color:#ffffff;opacity:.92;padding:0;margin:0;box-sizing:border-box}" +
@@ -1722,10 +1651,11 @@
       return;
     }
     if (!pageBtn) {
-      pageBtn = document.createElement("span");
-      pageBtn.className = "pp-inline-btn";
+      pageBtn = el("span", {
+        className: "pp-inline-btn",
+        title: PP.SHORT_NAME + " (Alt+P)"
+      });
       pageBtn.setAttribute("role", "button");
-      pageBtn.title = PP.SHORT_NAME + " (Alt+P)";
       pageBtn.innerHTML = bolt;
       pageBtn.addEventListener("click", function (event) {
         event.stopPropagation();

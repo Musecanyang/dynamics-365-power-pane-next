@@ -12,6 +12,7 @@
   "use strict";
   const PP = window.PP;
   const PPUtil = window.PPUtil;
+  const el = window.PPUtil.el;
   const {
     state,
     send,
@@ -294,47 +295,35 @@
 
   function buildImpersonateModal() {
     openModal(function (box, close) {
-      const heading = document.createElement("h3");
-      heading.textContent = "Impersonate User";
-      box.appendChild(heading);
-      const description = document.createElement("p");
-      description.className = "desc";
-      description.textContent = "Search by name, email or domain. Requires prvActOnBehalfOfAnotherUser.";
-      box.appendChild(description);
+      box.appendChild(el("h3", { text: "Impersonate User" }));
+      box.appendChild(el("p", {
+        className: "desc",
+        text: "Search by name, email or domain. Requires prvActOnBehalfOfAnotherUser."
+      }));
 
       if (state.impersonation && state.impersonation.user) {
-        const bar = document.createElement("div");
-        bar.className = "impbar";
-        const activeName = document.createElement("span");
-        activeName.className = "nm";
-        activeName.textContent = "Active: " + state.impersonation.user.fullname;
-        const stop = document.createElement("button");
-        stop.className = "mini";
-        stop.textContent = "Stop";
-        stop.addEventListener("click", stopImpersonate);
-        bar.appendChild(activeName);
-        bar.appendChild(stop);
+        const bar = el("div", { className: "impbar" });
+        bar.appendChild(el("span", { className: "nm", text: "Active: " + state.impersonation.user.fullname }));
+        bar.appendChild(el("button", { className: "mini", text: "Stop", onClick: stopImpersonate }));
         box.appendChild(bar);
       }
 
-      const quick = document.createElement("div");
+      const quick = el("div");
       box.appendChild(quick);
 
-      const search = document.createElement("input");
-      search.className = "filter";
-      search.placeholder = "Name, email or domain (min 2 chars)";
+      const search = el("input", {
+        className: "filter",
+        placeholder: "Name, email or domain (min 2 chars)"
+      });
       box.appendChild(search);
 
-      const results = document.createElement("div");
+      const results = el("div");
       box.appendChild(results);
 
       function renderQuick() {
         quick.textContent = "";
         if (state.pinned.length) {
-          const pinnedTitle = document.createElement("div");
-          pinnedTitle.className = "sect";
-          pinnedTitle.textContent = "Pinned";
-          quick.appendChild(pinnedTitle);
+          quick.appendChild(el("div", { className: "sect", text: "Pinned" }));
           state.pinned.forEach(function (user) {
             quick.appendChild(userRow(user, renderQuick));
           });
@@ -343,10 +332,7 @@
           return !isPinned(user);
         });
         if (recentOnly.length) {
-          const recentTitle = document.createElement("div");
-          recentTitle.className = "sect";
-          recentTitle.textContent = "Recent";
-          quick.appendChild(recentTitle);
+          quick.appendChild(el("div", { className: "sect", text: "Recent" }));
           recentOnly.forEach(function (user) {
             quick.appendChild(userRow(user, renderQuick));
           });
@@ -362,24 +348,15 @@
           return;
         }
         results.textContent = "";
-        const loading = document.createElement("div");
-        loading.className = "muted";
-        loading.textContent = "Searching...";
-        results.appendChild(loading);
+        results.appendChild(el("div", { className: "muted", text: "Searching..." }));
 
         send("searchUsers", { query: query })
           .then(function (response) {
             const users = (response && response.users) || [];
             results.textContent = "";
-            const title = document.createElement("div");
-            title.className = "sect";
-            title.textContent = "Search Results";
-            results.appendChild(title);
+            results.appendChild(el("div", { className: "sect", text: "Search Results" }));
             if (!users.length) {
-              const none = document.createElement("div");
-              none.className = "empty";
-              none.textContent = "No users found.";
-              results.appendChild(none);
+              results.appendChild(el("div", { className: "empty", text: "No users found." }));
               return;
             }
             users.forEach(function (user) {
@@ -388,10 +365,7 @@
           })
           .catch(function (err) {
             results.textContent = "";
-            const error = document.createElement("div");
-            error.className = "empty";
-            error.textContent = err.message;
-            results.appendChild(error);
+            results.appendChild(el("div", { className: "empty", text: err.message }));
           });
       }
       search.addEventListener("input", function () {
@@ -399,12 +373,8 @@
         timer = setTimeout(doSearch, USER_SEARCH_DEBOUNCE_MS);
       });
 
-      const foot = document.createElement("div");
-      foot.className = "foot";
-      const closeButton = document.createElement("button");
-      closeButton.textContent = "Close";
-      closeButton.addEventListener("click", close);
-      foot.appendChild(closeButton);
+      const foot = el("div", { className: "foot" });
+      foot.appendChild(el("button", { text: "Close", onClick: close }));
       box.appendChild(foot);
     });
   }

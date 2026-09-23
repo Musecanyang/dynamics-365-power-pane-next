@@ -67,6 +67,13 @@
       if (attrs.style) node.style.cssText = attrs.style;
       if (attrs.hidden) node.hidden = attrs.hidden;
       if (attrs.onClick) node.addEventListener("click", attrs.onClick);
+      // Common element properties (inputs, selects, labels...). Keep this list
+      // conservative: anything that needs markup, dataset, extra listeners or
+      // edge-case ordering stays outside el().
+      (["type", "placeholder", "disabled", "checked", "name", "src", "href",
+        "htmlFor"]).forEach(function (key) {
+        if (attrs[key] != null) node[key] = attrs[key];
+      });
       // Children may arrive as the third argument or inline in the attrs
       // object (`el("div", { className: "x", children: [...] })`) - both spell
       // the same intent.

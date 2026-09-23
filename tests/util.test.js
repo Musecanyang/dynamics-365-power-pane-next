@@ -1,5 +1,5 @@
 /**
- * Unit tests for src/util.js (shared pure helpers).
+ * Unit tests for shared/util.js (shared pure helpers).
  *
  * util.js is a plain (non-module) script that attaches PPUtil to `window`, so
  * it is loaded into a sandbox via `vm` - no bundler or transpile involved.
@@ -14,7 +14,7 @@ const { test } = require("node:test");
 
 /** Load util.js in a minimal sandbox and return the PPUtil namespace. */
 function loadUtil(stubDocument) {
-  const source = fs.readFileSync(path.resolve("src/util.js"), "utf8");
+  const source = fs.readFileSync(path.resolve("shared/util.js"), "utf8");
   const sandbox = { window: {} };
   if (stubDocument) sandbox.document = stubDocument;
   vm.runInNewContext(source, sandbox);
@@ -181,9 +181,9 @@ test("userRow: name / email meta + one button per action", () => {
 test("userRow: falls back to domain name when email is absent; no actions = no buttons", () => {
   const doc = stubDocument();
   const ui = loadUtil(doc);
-  const row = ui.userRow({ fullname: "", domainname: "LENOVO\\user" });
+  const row = ui.userRow({ fullname: "", domainname: "Test\\user" });
   assert.equal(row.children[0].children[0].textContent, "(no name)");
-  assert.equal(row.children[0].children[1].textContent, "LENOVO\\user");
+  assert.equal(row.children[0].children[1].textContent, "Test\\user");
   assert.equal(row.children.length, 1);
 });
 

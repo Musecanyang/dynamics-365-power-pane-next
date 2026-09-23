@@ -163,6 +163,12 @@
         if (control.getControlType() !== "lookup") return;
         const holder = findContainer(control.getName());
         if (!holder) return;
+        // Intentionally NOT migrated to PPUtil.el(): commands/*.js run in the
+        // MAIN world, which cannot load shared/util.js (crbug.com/324096753 -
+        // see shared/constants.js + content/README.md). window.PPUtil is
+        // undefined here. A PPMain.el duplicate would break the "one shared
+        // implementation" principle for a single site; this is the only
+        // MAIN-world createElement remaining in the project.
         const link = document.createElement("a");
         link.className = "pp-lookup-link";
         link.title = "Open this record in a new window";

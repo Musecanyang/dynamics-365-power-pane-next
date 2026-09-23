@@ -156,12 +156,13 @@ test("a collection without any attribute column returns null", () => {
   assert.deepEqual(result.columns, ["id"]);
 });
 
-test("REAL Execute-style response (user org): parses to a table, not the raw fallback", () => {
-  // fixtures/user-real-executeresponse.xml captures the Execute/Results pair
-  // wrapper shape seen in production (entity collection nested inside
-  // a <b:value i:type="a:EntityCollection">, keys in the b: data-contract ns).
+test("REAL Execute-style response (sanitized): parses to a table, not the raw fallback", () => {
+  // fixtures/executeResponse-real-shape.xml is a sanitized capture of the
+  // Execute/Results pair wrapper shape from a real org (entity collection
+  // nested inside a <b:value i:type="a:EntityCollection">, keys in the b:
+  // data-contract ns; neutral sample_ prefix, placeholder GUIDs).
   // This is the "ran but no table" regression guard reported by the user.
-  const realEnvelope = fs.readFileSync(path.join(FIXTURES, "user-real-executeresponse.xml"), "utf8");
+  const realEnvelope = fs.readFileSync(path.join(FIXTURES, "executeResponse-real-shape.xml"), "utf8");
   const result = parse(realEnvelope);
   assert.notEqual(result, null, "must parse the Execute/Results wrapper shape");
   assert.equal(result.entityName, "sample_ownermapping");

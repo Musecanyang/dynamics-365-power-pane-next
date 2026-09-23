@@ -31,7 +31,7 @@
  * All cross-file constants come from src/constants.js (imported below).
  */
 
-importScripts("./src/constants.js");
+importScripts("./shared/constants.js");
 
 const PP = self.PP;
 

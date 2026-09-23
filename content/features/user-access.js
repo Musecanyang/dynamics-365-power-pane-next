@@ -22,6 +22,7 @@
     USER_SEARCH_RESULT_LIMIT,
     TEAM_LIST_LIMIT
   } = Pane;
+  const el = window.PPUtil.el;
   /* ------------------------------------------------------------------ *
    * Feature: user permissions
    * ------------------------------------------------------------------ */
@@ -32,21 +33,20 @@
   function openUserAccess() {
     openModal(
       function (box, close) {
-        const heading = document.createElement("h3");
-        heading.textContent = "User Permissions";
-        box.appendChild(heading);
-        const description = document.createElement("p");
-        description.className = "desc";
-        description.textContent = "View and modify a user's roles, teams and business unit. Changes apply immediately.";
-        box.appendChild(description);
+        box.appendChild(el("h3", { text: "User Permissions" }));
+        box.appendChild(el("p", {
+          className: "desc",
+          text: "View and modify a user's roles, teams and business unit. Changes apply immediately."
+        }));
 
-        const search = document.createElement("input");
-        search.className = "filter";
-        search.placeholder = "Search user by name or email (min 2 chars)";
+        const search = el("input", {
+          className: "filter",
+          placeholder: "Search user by name or email (min 2 chars)"
+        });
         box.appendChild(search);
-        const results = document.createElement("div");
+        const results = el("div");
         box.appendChild(results);
-        const detail = document.createElement("div");
+        const detail = el("div");
         box.appendChild(detail);
 
         let allRoles = [];
@@ -83,10 +83,7 @@
           // profiles (`id`) so save flows can re-render the same user.
           const userId = String(user.systemuserid || user.id || "").replace(/[{}]/g, "");
           detail.textContent = "";
-          const loading = document.createElement("div");
-          loading.className = "muted";
-          loading.textContent = "Loading access...";
-          detail.appendChild(loading);
+          detail.appendChild(el("div", { className: "muted", text: "Loading access..." }));
           Promise.all([send("getUserAccess", { userid: userId }), metaReady])
             .then(function (data) {
               detail.textContent = "";
@@ -94,10 +91,7 @@
             })
             .catch(function (err) {
               detail.textContent = "";
-              const error = document.createElement("div");
-              error.className = "empty";
-              error.textContent = err.message;
-              detail.appendChild(error);
+              detail.appendChild(el("div", { className: "empty", text: err.message }));
             });
         }
 
@@ -139,40 +133,28 @@
           let currentBusinessUnit = originalBusinessUnit;
 
           // Header: user name + email.
-          const head = document.createElement("div");
-          head.className = "ua-head";
-          const nameEl = document.createElement("b");
-          nameEl.textContent = access.user.name;
-          const emailEl = document.createElement("div");
-          emailEl.className = "muted";
-          emailEl.textContent = access.user.email || "";
-          head.appendChild(nameEl);
-          head.appendChild(emailEl);
-          detail.appendChild(head);
+          detail.appendChild(el("div", {
+            className: "ua-head",
+            children: [
+              el("b", { text: access.user.name }),
+              el("div", { className: "muted", text: access.user.email || "" })
+            ]
+          }));
 
           // Business unit selector. Changing the BU is a standalone, immediate
           // operation: apply it right away so the role list reloads with the
           // roles of the new business unit (they are not part of the overall
           // save).
-          const buRow = document.createElement("div");
-          buRow.className = "ua-row";
-          const buLabel = document.createElement("div");
-          buLabel.className = "ua-k";
-          buLabel.textContent = "Business Unit";
-          const buValue = document.createElement("div");
-          buValue.className = "ua-v";
-          const buSelect = document.createElement("select");
+          const buRow = el("div", { className: "ua-row" });
+          const buLabel = el("div", { className: "ua-k", text: "Business Unit" });
+          const buValue = el("div", { className: "ua-v" });
+          const buSelect = el("select");
           allBusinessUnits.forEach(function (businessUnit) {
-            const option = document.createElement("option");
-            option.value = businessUnit.id;
-            option.textContent = businessUnit.name;
+            const option = el("option", { value: businessUnit.id, text: businessUnit.name });
             if (businessUnit.id.toLowerCase() === currentBusinessUnit) option.selected = true;
             buSelect.appendChild(option);
           });
-          const buApply = document.createElement("button");
-          buApply.className = "mini";
-          buApply.textContent = "Change BU";
-          buApply.disabled = true;
+          const buApply = el("button", { className: "mini", text: "Change BU", disabled: true });
           function refreshBuControls() {
             const pendingBu = currentBusinessUnit !== originalBusinessUnit;
             buApply.disabled = !pendingBu || buApply.classList.contains("running");
@@ -225,34 +207,26 @@
 
           // Roles / teams editors side by side; the sticky footer below
           // covers both columns.
-          const uaColumns = document.createElement("div");
-          uaColumns.className = "ua-cols";
-          const rolesColumn = document.createElement("div");
-          rolesColumn.className = "ua-col";
-          const teamsColumn = document.createElement("div");
-          teamsColumn.className = "ua-col";
+          const uaColumns = el("div", { className: "ua-cols" });
+          const rolesColumn = el("div", { className: "ua-col" });
+          const teamsColumn = el("div", { className: "ua-col" });
           uaColumns.appendChild(rolesColumn);
           uaColumns.appendChild(teamsColumn);
           detail.appendChild(uaColumns);
 
           // Assigned roles chips.
-          const assignedRolesTitle = document.createElement("div");
-          assignedRolesTitle.className = "sect";
+          const assignedRolesTitle = el("div", { className: "sect" });
           rolesColumn.appendChild(assignedRolesTitle);
-          const assignedRolesChips = document.createElement("div");
-          assignedRolesChips.className = "ua-chips";
+          const assignedRolesChips = el("div", { className: "ua-chips" });
           rolesColumn.appendChild(assignedRolesChips);
           function renderAssignedRoles() {
             assignedRolesChips.textContent = "";
             const ids = Object.keys(currentRoles);
             assignedRolesTitle.textContent = "Assigned Roles (" + ids.length + ")";
             ids.sort().forEach(function (id) {
-              const chip = document.createElement("span");
-              chip.className = "chip";
+              const chip = el("span", { className: "chip" });
               chip.appendChild(document.createTextNode((roleNameMap[id] || id) + " "));
-              const remove = document.createElement("span");
-              remove.textContent = "\u00d7";
-              remove.style.cssText = "cursor:pointer;opacity:.7";
+              const remove = el("span", { text: "\u00d7", style: "cursor:pointer;opacity:.7" });
               remove.addEventListener("click", function () {
                 delete currentRoles[id];
                 renderAssignedRoles();
@@ -263,24 +237,18 @@
               assignedRolesChips.appendChild(chip);
             });
             if (!ids.length) {
-              const none = document.createElement("span");
-              none.className = "muted";
-              none.textContent = "None";
-              assignedRolesChips.appendChild(none);
+              assignedRolesChips.appendChild(el("span", { className: "muted", text: "None" }));
             }
           }
 
           // All roles list with filter.
-          const rolesTitle = document.createElement("div");
-          rolesTitle.className = "sect";
-          rolesTitle.textContent = "All Roles";
-          rolesColumn.appendChild(rolesTitle);
-          const roleSearch = document.createElement("input");
-          roleSearch.className = "filter";
-          roleSearch.placeholder = "Filter roles (comma = exact names)";
+          rolesColumn.appendChild(el("div", { className: "sect", text: "All Roles" }));
+          const roleSearch = el("input", {
+            className: "filter",
+            placeholder: "Filter roles (comma = exact names)"
+          });
           rolesColumn.appendChild(roleSearch);
-          const rolesList = document.createElement("div");
-          rolesList.className = "ua-list";
+          const rolesList = el("div", { className: "ua-list" });
           rolesColumn.appendChild(rolesList);
 
           const roleSourceMap = {};
@@ -313,11 +281,11 @@
                 return a.name.localeCompare(b.name);
               })
               .forEach(function (role) {
-                const label = document.createElement("label");
-                label.className = "ua-item";
-                const checkbox = document.createElement("input");
-                checkbox.type = "checkbox";
-                checkbox.checked = !!currentRoles[role.id.toLowerCase()];
+                const label = el("label", { className: "ua-item" });
+                const checkbox = el("input", {
+                  type: "checkbox",
+                  checked: !!currentRoles[role.id.toLowerCase()]
+                });
                 checkbox.addEventListener("change", function () {
                   if (checkbox.checked) currentRoles[role.id.toLowerCase()] = true;
                   else delete currentRoles[role.id.toLowerCase()];
@@ -332,23 +300,18 @@
           roleSearch.addEventListener("input", renderRoles);
 
           // Assigned teams chips.
-          const assignedTeamsTitle = document.createElement("div");
-          assignedTeamsTitle.className = "sect";
+          const assignedTeamsTitle = el("div", { className: "sect" });
           teamsColumn.appendChild(assignedTeamsTitle);
-          const assignedTeamsChips = document.createElement("div");
-          assignedTeamsChips.className = "ua-chips";
+          const assignedTeamsChips = el("div", { className: "ua-chips" });
           teamsColumn.appendChild(assignedTeamsChips);
           function renderAssignedTeams() {
             assignedTeamsChips.textContent = "";
             const ids = Object.keys(currentTeams);
             assignedTeamsTitle.textContent = "Teams (" + ids.length + ")";
             ids.sort().forEach(function (id) {
-              const chip = document.createElement("span");
-              chip.className = "chip";
+              const chip = el("span", { className: "chip" });
               chip.appendChild(document.createTextNode((teamNameMap[id] || id) + " "));
-              const remove = document.createElement("span");
-              remove.textContent = "\u00d7";
-              remove.style.cssText = "cursor:pointer;opacity:.7";
+              const remove = el("span", { text: "\u00d7", style: "cursor:pointer;opacity:.7" });
               remove.addEventListener("click", function () {
                 delete currentTeams[id];
                 renderAssignedTeams();
@@ -359,25 +322,19 @@
               assignedTeamsChips.appendChild(chip);
             });
             if (!ids.length) {
-              const none = document.createElement("span");
-              none.className = "muted";
-              none.textContent = "None";
-              assignedTeamsChips.appendChild(none);
+              assignedTeamsChips.appendChild(el("span", { className: "muted", text: "None" }));
             }
           }
 
           // Team picker (search + add); the section title mirrors the roles
           // column so both list areas start at the same height (alignment).
-          const allTeamsTitle = document.createElement("div");
-          allTeamsTitle.className = "sect";
-          allTeamsTitle.textContent = "All Teams";
-          teamsColumn.appendChild(allTeamsTitle);
-          const teamSearch = document.createElement("input");
-          teamSearch.className = "filter";
-          teamSearch.placeholder = "Search teams to add (comma = exact names)";
+          teamsColumn.appendChild(el("div", { className: "sect", text: "All Teams" }));
+          const teamSearch = el("input", {
+            className: "filter",
+            placeholder: "Search teams to add (comma = exact names)"
+          });
           teamsColumn.appendChild(teamSearch);
-          const teamsList = document.createElement("div");
-          teamsList.className = "ua-list";
+          const teamsList = el("div", { className: "ua-list" });
           teamsColumn.appendChild(teamsList);
           function renderTeams() {
             teamsList.textContent = "";
@@ -393,14 +350,10 @@
               })
               .slice(0, TEAM_LIST_LIMIT)
               .forEach(function (team) {
-                const row = document.createElement("div");
-                row.className = "ua-item";
-                const name = document.createElement("span");
+                const row = el("div", { className: "ua-item" });
+                const name = el("span", { text: team.name });
                 name.style.flex = "1";
-                name.textContent = team.name;
-                const add = document.createElement("button");
-                add.className = "mini";
-                add.textContent = "Add";
+                const add = el("button", { className: "mini", text: "Add" });
                 add.addEventListener("click", function () {
                   currentTeams[team.id.toLowerCase()] = true;
                   teamNameMap[team.id.toLowerCase()] = team.name;
@@ -418,25 +371,17 @@
           // Save footer with staged diff; pinned to the dialog bottom so it
           // stays reachable without scrolling past the long lists. Close
           // lives here too instead of a lone full-width row below.
-          const saveRow = document.createElement("div");
-          saveRow.className = "foot split ua-foot";
+          const saveRow = el("div", { className: "foot split ua-foot" });
           detail.appendChild(saveRow);
-          const info = document.createElement("span");
-          info.className = "muted";
+          const info = el("span", { className: "muted" });
           saveRow.appendChild(info);
-          const footerButtons = document.createElement("div");
-          footerButtons.className = "actions-buttons";
-          const saveButton = document.createElement("button");
-          saveButton.className = "primary";
-          saveButton.textContent = "Save";
+          const footerButtons = el("div", { className: "actions-buttons" });
+          const saveButton = el("button", { className: "primary", text: "Save" });
           footerButtons.appendChild(saveButton);
-          const copyButton = document.createElement("button");
-          copyButton.className = "mini";
-          copyButton.textContent = "Copy From User";
+          const copyButton = el("button", { className: "mini", text: "Copy From User" });
           copyButton.addEventListener("click", openCopyDialog);
           footerButtons.appendChild(copyButton);
-          const closeButton = document.createElement("button");
-          closeButton.textContent = "Close";
+          const closeButton = el("button", { text: "Close" });
           closeButton.addEventListener("click", close);
           footerButtons.appendChild(closeButton);
           saveRow.appendChild(footerButtons);
@@ -587,19 +532,18 @@
           /** Picker dialog: search the source user to copy permissions from. */
           function openCopyDialog() {
             openModal(function (sub, subClose) {
-              const heading = document.createElement("h3");
-              heading.textContent = "Copy Permissions From...";
-              sub.appendChild(heading);
-              const description = document.createElement("p");
-              description.className = "desc";
-              description.textContent =
-                "Copies the selected user's business unit, roles and teams. Applied strictly: business unit first, then roles / teams against the new business unit.";
-              sub.appendChild(description);
-              const copySearch = document.createElement("input");
-              copySearch.className = "filter";
-              copySearch.placeholder = "Search user by name or email (min 2 chars)";
+              sub.appendChild(el("h3", { text: "Copy Permissions From..." }));
+              sub.appendChild(el("p", {
+                className: "desc",
+                text:
+                  "Copies the selected user's business unit, roles and teams. Applied strictly: business unit first, then roles / teams against the new business unit."
+              }));
+              const copySearch = el("input", {
+                className: "filter",
+                placeholder: "Search user by name or email (min 2 chars)"
+              });
               sub.appendChild(copySearch);
-              const copyResults = document.createElement("div");
+              const copyResults = el("div");
               sub.appendChild(copyResults);
               let copyTimer = null;
               copySearch.addEventListener("input", function () {
@@ -643,10 +587,8 @@
                     });
                 }, USER_SEARCH_DEBOUNCE_MS);
               });
-              const footEl = document.createElement("div");
-              footEl.className = "foot";
-              const cancelBtn = document.createElement("button");
-              cancelBtn.textContent = "Close";
+              const footEl = el("div", { className: "foot" });
+              const cancelBtn = el("button", { text: "Close" });
               cancelBtn.addEventListener("click", subClose);
               footEl.appendChild(cancelBtn);
               sub.appendChild(footEl);

@@ -13,6 +13,9 @@
   const PP = window.PP;
   const ACTIONS = window.POWER_PANE_ACTIONS || [];
 
+  /** Shared DOM factory (shared/util.js). */
+  const el = window.PPUtil.el;
+
   /** Lookup table action id -> action definition. */
   const actionsById = {};
   ACTIONS.forEach(function (action) {
@@ -172,10 +175,8 @@
   function render() {
     listEl.textContent = "";
     GROUP_ORDER.forEach(function (group) {
-      const fieldset = document.createElement("fieldset");
-      const legend = document.createElement("legend");
-      legend.textContent = group;
-      fieldset.appendChild(legend);
+      const fieldset = el("fieldset");
+      fieldset.appendChild(el("legend", { text: group }));
 
       const ids = idsOfGroup(group);
       const enabledIds = ids.filter(function (id) {
@@ -196,36 +197,30 @@
     const action = actionsById[actionId];
     const isEnabled = visibility[actionId] !== false;
 
-    const row = document.createElement("div");
-    row.className = "row" + (isEnabled ? "" : " disabled");
+    const row = el("div", { className: "row" + (isEnabled ? "" : " disabled") });
     row.draggable = true;
     row.dataset.id = actionId;
 
-    const handle = document.createElement("span");
-    handle.className = "handle";
-    handle.textContent = "\u22ee\u22ee";
+    const handle = el("span", { className: "handle", text: "\u22ee\u22ee" });
 
-    const checkbox = document.createElement("input");
-    checkbox.type = "checkbox";
-    checkbox.checked = isEnabled;
+    const checkbox = el("input", { type: "checkbox", checked: isEnabled });
     checkbox.addEventListener("change", function () {
       visibility[actionId] = checkbox.checked;
       render();
     });
 
-    const label = document.createElement("span");
-    label.className = "lbl";
-    label.textContent = action.label;
+    const label = el("span", { className: "lbl", text: action.label });
     label.addEventListener("click", function () {
       checkbox.checked = !checkbox.checked;
       visibility[actionId] = checkbox.checked;
       render();
     });
 
-    const shortcut = document.createElement("button");
-    shortcut.type = "button";
-    shortcut.className = "sc";
-    shortcut.textContent = shortcuts[actionId] || "none";
+    const shortcut = el("button", {
+      type: "button",
+      className: "sc",
+      text: shortcuts[actionId] || "none"
+    });
     shortcut.addEventListener("click", function () {
       startRecording(actionId, shortcut);
     });
@@ -373,8 +368,7 @@
   });
 
   document.getElementById("importSettings").addEventListener("click", function () {
-    const input = document.createElement("input");
-    input.type = "file";
+    const input = el("input", { type: "file" });
     input.accept = ".json,application/json";
     input.style.display = "none";
     input.addEventListener("change", async function () {

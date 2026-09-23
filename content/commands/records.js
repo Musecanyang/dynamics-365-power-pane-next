@@ -312,7 +312,8 @@
       if (seenLogicalNames[dedupeKey]) return;
       seenLogicalNames[dedupeKey] = true;
       // Skip platform companions: they point at their parent via `AttributeOf`
-      // and read back the same data (e.g. example_sendnotificationstatusname).
+      // and read back the same data (e.g. <prefix>_sendnotificationstatusname
+      // for a custom entity: the platform generates the companion column>).
       if (attribute.AttributeOf && String(attribute.AttributeType) === "Virtual") {
         return;
       }

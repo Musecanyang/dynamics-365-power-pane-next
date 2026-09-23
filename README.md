@@ -1,6 +1,6 @@
 # Dynamics 365 Power Pane Next
 
-[![Version](https://img.shields.io/badge/version-1.2.1-blue.svg)](https://github.com/Musecanyang/dynamics-365-power-pane-next/releases)
+[![Version](https://img.shields.io/badge/version-1.3.0-blue.svg)](https://github.com/Musecanyang/dynamics-365-power-pane-next/releases)
 [![Manifest V3](https://img.shields.io/badge/manifest-v3-brightgreen.svg)](https://developer.chrome.com/docs/extensions/develop/migrate/what-is-mv3)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![CI](https://github.com/Musecanyang/dynamics-365-power-pane-next/actions/workflows/ci.yml/badge.svg)](https://github.com/Musecanyang/dynamics-365-power-pane-next/actions/workflows/ci.yml)
@@ -172,16 +172,16 @@ flowchart LR
 - **`content/main-world.js`** is the MAIN-world entry: Xrm / Web API plumbing
   (`webApiGet` family, URL helpers, the SOAP parser) plus the command
   registry, frozen as `window.PPMain`. **`content/commands/*.js`** hold the
-  command handlers grouped like `src/actions.js` groups (`general`, `runcode`,
+  command handlers grouped like `shared/actions.js` groups (`general`, `runcode`,
   `records`, `forms`, `navigation`, `security`, `debug`) and register each one
   via `PPmain.register`; cross-command reads go through `PPmain.get`. Every
   handler answers with a small data table (`message`, `output`, `table`,
   `users`, `items`).
 - **`background.js`** owns impersonation: it adds the `CallerObjectId` header to
   the environment's requests with `declarativeNetRequest` session rules.
-- **`src/constants.js`** is the single source of truth for storage keys, message
-  types and the product name; **`src/util.js`** holds the pure helpers shared
-  by the content script and the options page; **`src/actions.js`** is the
+- **`shared/constants.js`** is the single source of truth for storage keys, message
+  types and the product name; **`shared/util.js`** holds the pure helpers shared
+  by the content script and the options page; **`shared/actions.js`** is the
   action registry.
 
 ### Impersonation
@@ -279,7 +279,7 @@ cookies or tokens.
 ```
 manifest.json                 MV3 manifest (content scripts, background, options)
 background.js                 service worker: toolbar toggle + impersonation (DNR)
-src/
+shared/
   constants.js                shared constants (name, storage keys, message types)
   util.js                     pure helpers shared by the content script + options
   actions.js                  action registry (the single source of truth)
@@ -301,7 +301,6 @@ content/
     navigation.js             "open / go to" URL navigation handlers
     security.js               user access + role / team / business-unit writes
     debug.js                  Microsoft URL-flag + DNR debug handlers
-scripts/                      Node guardrails (syntax + bridge/debug-marker checks)
 tests/                        unit tests (contract snapshot, SOAP parser, helpers)
 options/
   options.html, options.js    visibility / order / shortcuts / theme
@@ -316,7 +315,7 @@ icons/                        toolbar icons
    `{ items }`). Destructure the helpers you need from `PPmain`
    (`tests/contract.test.js` asserts every destructured key exists, so a
    missing contract key fails CI instead of breaking your action at runtime).
-2. Register it in `src/actions.js` with a stable `id`, `group`, `label` and
+2. Register it in `shared/actions.js` with a stable `id`, `group`, `label` and
    `command`. Use `local: true` for actions handled in a feature module
    (`content/features/*.js`, via `PPPane.registerLocal`) instead.
 3. (Optional) add inputs via the `inputs` array — `entity: true` gives an entity

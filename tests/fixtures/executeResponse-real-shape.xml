@@ -1,9 +1,14 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  Fixture: the REAL Execute-style SOAP envelope captured from the user's org.
-  The entity collection is wrapped in the Execute/ExecuteResult/Results pairs
-  shape (not the plain RetrieveMultiple shape). Keys live in the b: namespace
+  Fixture: a REALISTIC Execute-style SOAP envelope (anonymized). The entity
+  collection is wrapped in the Execute/ExecuteResult/Results pairs shape (not
+  the plain RetrieveMultiple shape). Keys live in the b: namespace
   (System.Collections.Generic data contract), Values in a:/c: mixed prefixes.
+
+  The original capture was sanitized: custom entity attributes / logical
+  names were renamed to a neutral `sample_` prefix, all record GUIDs and the
+  business-unit name were replaced with placeholder values. Keep this
+  anonymized whenever the fixture is regenerated from a new capture.
 -->
 <s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/">
   <s:Body>
