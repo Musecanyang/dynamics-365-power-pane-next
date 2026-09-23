@@ -95,12 +95,21 @@ jobs:
           zip -q "power-pane-next-${GITHUB_REF_NAME}.zip" -@ < files.txt
           unzip -l "power-pane-next-${GITHUB_REF_NAME}.zip"
 
-      - name: Create GitHub Release
+      - name: Create GitHub Release (idempotent)
         env:
           GH_TOKEN: ${{ github.token }}
+        # Idempotent: a re-run (e.g. after a history rewrite / forced tag push)
+        # must not fail on an already-existing Release. If it exists, keep the
+        # notes and refresh the extension zip asset instead.
         run: |
-          gh release create "$GITHUB_REF_NAME" \
-            "power-pane-next-${GITHUB_REF_NAME}.zip" \
-            --title "$GITHUB_REF_NAME" \
-            --notes-file release-notes.md \
-            --verify-tag
+          if gh release view "$GITHUB_REF_NAME" --json id > /dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" \
+              "power-pane-next-${GITHUB_REF_NAME}.zip" --clobber
+            echo "Release $GITHUB_REF_NAME already existed - refresh the zip asset."
+          else
+            gh release create "$GITHUB_REF_NAME" \
+              "power-pane-next-${GITHUB_REF_NAME}.zip" \
+              --title "$GITHUB_REF_NAME" \
+              --notes-file release-notes.md \
+              --verify-tag
+          fi
