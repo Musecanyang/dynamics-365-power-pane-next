@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Privacy Policy · Dynamics 365 Power Pane Next</title>
+    <meta name="description" content="Privacy policy for the Dynamics 365 Power Pane Next Chrome extension." />
+    <style>
+      :root {
+        --accent: #3a63ff;
+        --fg: #1b1f27;
+        --sub: #5b6472;
+        --line: #e4e7ec;
+        --bg: #ffffff;
+        --soft: #f7f8fa;
+      }
+      * { box-sizing: border-box; }
+      html { -webkit-text-size-adjust: 100%; }
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--fg);
+        font: 16px/1.65 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      }
+      .wrap { max-width: 780px; margin: 0 auto; padding: 56px 24px 96px; }
+      header { padding-bottom: 24px; border-bottom: 1px solid var(--line); margin-bottom: 32px; }
+      .eyebrow {
+        display: inline-block; font-size: 12px; font-weight: 600; letter-spacing: .08em;
+        text-transform: uppercase; color: var(--accent); margin: 0 0 10px;
+      }
+      h1 { font-size: 30px; line-height: 1.2; margin: 0 0 10px; letter-spacing: -.01em; }
+      .meta { color: var(--sub); font-size: 14px; margin: 0; }
+      h2 {
+        font-size: 17px; margin: 40px 0 10px; padding-top: 8px;
+        letter-spacing: -.005em;
+      }
+      h2 .num { color: var(--accent); font-variant-numeric: tabular-nums; margin-right: 8px; }
+      p, li { color: #262b34; }
+      p { margin: 0 0 14px; }
+      ul { margin: 0 0 14px; padding-left: 20px; }
+      li { margin: 0 0 6px; }
+      .tldr {
+        background: var(--soft); border: 1px solid var(--line); border-left: 3px solid var(--accent);
+        border-radius: 8px; padding: 18px 20px; margin: 0 0 8px;
+      }
+      .tldr p:last-child { margin-bottom: 0; }
+      code {
+        font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+        font-size: 13.5px; background: var(--soft); border: 1px solid var(--line);
+        border-radius: 4px; padding: 1px 5px;
+      }
+      table { width: 100%; border-collapse: collapse; margin: 6px 0 18px; font-size: 14.5px; }
+      th, td { text-align: left; padding: 9px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+      th { font-size: 12px; text-transform: uppercase; letter-spacing: .05em; color: var(--sub); font-weight: 600; }
+      a { color: var(--accent); text-decoration: none; }
+      a:hover { text-decoration: underline; }
+      footer { margin-top: 48px; padding-top: 20px; border-top: 1px solid var(--line); color: var(--sub); font-size: 13.5px; }
+      footer p { color: var(--sub); margin: 0 0 6px; }
+      @media (max-width: 560px) {
+        .wrap { padding: 36px 18px 64px; }
+        h1 { font-size: 24px; }
+        table, thead, tbody, th, td, tr { display: block; }
+        thead { display: none; }
+        td { border: 0; padding: 2px 0; }
+        tr { border-bottom: 1px solid var(--line); padding: 10px 0; }
+      }
+      @media (prefers-color-scheme: dark) {
+        :root { --fg: #e8ebf1; --sub: #9aa3b2; --line: #262b34; --bg: #0f1216; --soft: #161a20; }
+        body { background: var(--bg); }
+        p, li { color: #d5dae3; }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <header>
+        <p class="eyebrow">Privacy Policy</p>
+        <h1>Dynamics 365 Power Pane Next</h1>
+        <p class="meta">Last updated: 4 November 2026 · Contact: <a href="mailto:nicktech1337@gmail.com">nicktech1337@gmail.com</a></p>
+      </header>
+
+      <div class="tldr">
+        <p>
+          Dynamics 365 Power Pane Next adds an action pane to Microsoft Dynamics 365 model-driven apps.
+          It runs entirely in your browser, inside the session you are already signed in to. The developer
+          operates no server, receives no data, and uses no analytics, telemetry or advertising. What the
+          extension reads on the page is displayed to you, and stored on your own device only if you save it.
+        </p>
+      </div>
+
+      <h2><span class="num">1</span>Who we are</h2>
+      <p>
+        Dynamics 365 Power Pane Next (&ldquo;the extension&rdquo;) is an independent open-source project distributed
+        under the MIT licence. The publisher is the individual developer listed on the extension&rsquo;s Chrome Web
+        Store listing (&ldquo;we&rdquo;, &ldquo;us&rdquo;). You can reach us at
+        <a href="mailto:nicktech1337@gmail.com">nicktech1337@gmail.com</a>.
+      </p>
+
+      <h2><span class="num">2</span>What the extension does</h2>
+      <p>
+        The extension injects a pane into pages served from <code>*.dynamics.com</code> so that developers,
+        testers and administrators can inspect and act on the record they are already viewing: copy record
+        identifiers and URLs, inspect form fields, option sets and entity metadata, open maker and
+        administration pages, apply Microsoft&rsquo;s documented troubleshooting URL flags, run FetchXML or
+        JavaScript against the user&rsquo;s own environment, and &mdash; when the signed-in user holds the
+        Dataverse privilege <code>prvActOnBehalfOfAnotherUser</code> &mdash; send that user&rsquo;s own requests
+        as another user by setting the documented <code>CallerObjectId</code> request header.
+      </p>
+
+      <h2><span class="num">3</span>Data the extension handles</h2>
+      <table>
+        <thead>
+          <tr><th>Category</th><th>What it includes</th><th>Where it stays</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Dynamics page content</td>
+            <td>Field values, record data, entity metadata, option set labels and form structure, read from the page you are viewing to display them in the pane or copy them when you ask.</td>
+            <td>Never stored by the extension, never transmitted. Clipboard only when you click copy.</td>
+          </tr>
+          <tr>
+            <td>Organization user data</td>
+            <td>Display name, email address, system user id, Microsoft Entra object id, business unit, security roles and teams, returned by your organization when you use Impersonate User, User Permissions or Role Check.</td>
+            <td>Shown in the pane. Users you recently searched for or impersonated may be remembered on your device to make the picker faster.</td>
+          </tr>
+          <tr>
+            <td>Preferences</td>
+            <td>Visible actions, their order, keyboard shortcuts, light or dark theme, pane size and position.</td>
+            <td><code>chrome.storage.sync</code>, which Chrome may sync across your signed-in devices.</td>
+          </tr>
+          <tr>
+            <td>Snippets</td>
+            <td>FetchXML queries and JavaScript snippets you create or import.</td>
+            <td><code>chrome.storage.local</code> on your device.</td>
+          </tr>
+          <tr>
+            <td>Impersonation session state</td>
+            <td>The target user&rsquo;s identifiers and the environment host while impersonation is active.</td>
+            <td><code>chrome.storage.session</code>, cleared by the browser on restart.</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <h2><span class="num">4</span>Where data goes</h2>
+      <p>We do not collect, receive, sell, rent or share your data. Specifically:</p>
+      <ul>
+        <li>there is no account and no sign-in;</li>
+        <li>we operate no server and no database;</li>
+        <li>there is no analytics, telemetry, crash reporting, advertising or third-party SDK of any kind;</li>
+        <li>no data is transmitted to us or to any third party.</li>
+      </ul>
+      <p>
+        Every network request the extension causes goes to the same Dynamics 365 / Dataverse environment you
+        already have open, over HTTPS, using the session your browser already holds. The extension never reads,
+        stores or transmits cookies, access tokens or passwords, and it does not read your browsing history.
+      </p>
+
+      <h2><span class="num">5</span>Local storage and deletion</h2>
+      <p>
+        Everything the extension writes lives in your Chrome profile. You can remove it at any time by opening
+        the extension&rsquo;s options page and choosing &ldquo;Restore default settings&rdquo;, by deleting
+        individual snippets, or by uninstalling the extension &mdash; uninstalling removes its local and session
+        storage. Preferences stored through <code>chrome.storage.sync</code> are removed when the extension is
+        uninstalled, subject to Chrome&rsquo;s own sync behaviour.
+      </p>
+
+      <h2><span class="num">6</span>Permissions</h2>
+      <ul>
+        <li><code>storage</code> &mdash; store your settings, snippets, recent users and impersonation session state.</li>
+        <li><code>tabs</code> &mdash; attach impersonation rules to the correct tabs and reload a tab after the identity changes.</li>
+        <li><code>declarativeNetRequestWithHostAccess</code> &mdash; set the documented <code>CallerObjectId</code> request header while impersonating. Rules are session-scoped, limited to the active environment&rsquo;s host, and removed when impersonation stops or the browser restarts.</li>
+        <li><code>https://*.dynamics.com/*</code> &mdash; run the pane and its content scripts only on Dynamics 365 / Dataverse pages.</li>
+      </ul>
+
+      <h2><span class="num">7</span>Impersonation and write actions</h2>
+      <p>
+        Impersonation is performed server-side through documented Dataverse request headers and only works if
+        the signed-in user holds the &ldquo;Act on behalf of another user&rdquo; privilege. The effective
+        privileges are the intersection of both users&rsquo; privileges. Changes to user roles, teams and
+        business units are sent to your organization&rsquo;s Web API as you, with your existing permissions.
+        These features are intended for test, development and administration work; you are responsible for
+        using them in accordance with your organization&rsquo;s policies and Microsoft&rsquo;s terms.
+      </p>
+
+      <h2><span class="num">8</span>Microsoft&rsquo;s role</h2>
+      <p>
+        Your Dynamics 365 / Dataverse environment is operated by your organization and Microsoft. Data in that
+        environment is governed by your organization&rsquo;s agreements with Microsoft, not by this policy. We
+        have no access to your environment and receive nothing from it.
+      </p>
+
+      <h2><span class="num">9</span>Chrome Web Store Limited Use disclosure</h2>
+      <p>
+        The extension&rsquo;s use of information received from Chrome APIs and from the pages it runs on adheres
+        to the Chrome Web Store User Data Policy, including the Limited Use requirements. In particular:
+      </p>
+      <ul>
+        <li>data is used only to provide or improve the extension&rsquo;s single purpose, the in-page action pane described in section 2;</li>
+        <li>data is not transferred to third parties except where necessary to provide that single purpose, to comply with applicable law, or for security purposes such as investigating abuse;</li>
+        <li>data is never used or transferred for personalised, retargeted or interest-based advertising;</li>
+        <li>no human reads your data, except with your consent for support, where necessary for security, where required by law, or after aggregation and anonymisation for internal reporting;</li>
+        <li>data is not used to determine creditworthiness or for lending purposes.</li>
+      </ul>
+
+      <h2><span class="num">10</span>Children</h2>
+      <p>
+        The extension is a professional tool for Dynamics 365 administrators and developers and is not directed
+        at children. We do not knowingly collect data from children.
+      </p>
+
+      <h2><span class="num">11</span>Changes</h2>
+      <p>
+        If the extension&rsquo;s data handling changes, this policy will be updated and the &ldquo;Last
+        updated&rdquo; date changed. Material changes will be noted in the extension&rsquo;s release notes.
+      </p>
+
+      <h2><span class="num">12</span>Contact</h2>
+      <p>
+        Questions about this policy or about data handling:
+        <a href="mailto:nicktech1337@gmail.com">nicktech1337@gmail.com</a><br />
+        Source code: <a href="https://github.com/Musecanyang/dynamics-365-power-pane-next">github.com/Musecanyang/dynamics-365-power-pane-next</a>
+      </p>
+
+      <footer>
+        <p>Dynamics 365 Power Pane Next is an independent project. It is not affiliated with, endorsed by, or supported by Microsoft. Microsoft, Dynamics 365 and Dataverse are trademarks of the Microsoft group of companies.</p>
+        <p>Licensed under the MIT licence.</p>
+      </footer>
+    </div>
+  </body>
+</html>
